@@ -1,0 +1,119 @@
+# ============================================================
+# mihomo (Clash.Meta) 配置模板
+#
+# 安装后本文件位于 ~/.config/mihomo/config.yaml
+# __API_SECRET__ 由 mihomoctl.sh 在启动时从 .api-secret 读入替换，
+# 请勿手动填写（换了会导致 API 鉴权不一致，菜单栏读不到状态）。
+# ============================================================
+
+mixed-port: 7890              # HTTP + SOCKS5 混合端口（macOS 系统代理惯用端口）
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: info
+ipv6: false                   # 关闭 IPv6：部分节点 IPv6 走不通会拖慢甚至卡死
+unified-delay: true           # 统一测速口径，节点延迟可比
+tcp-concurrent: true
+find-process-mode: off
+keep-alive-interval: 30
+
+# ---------- 外部控制 API（菜单栏/脚本都靠它读状态）----------
+external-controller: 127.0.0.1:9090
+secret: "__API_SECRET__"
+
+# ---------- 规则库 ----------
+geodata-mode: true
+geodata-loader: standard
+geo-auto-update: false        # 必须 false：自动更新会从 GitHub 下载，国内会卡住启动
+geox-url:                     # 手动更新时用镜像；由 refresh-geodata.sh 调用
+  geoip: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
+  geosite: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat"
+  mmdb: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/country.mmdb"
+
+# ---------- DNS ----------
+# 这三个 nameserver 的设置有踩坑历史，改动前请看 docs/GOTCHAS.md：
+#   direct-nameserver      ★ 缺了它会导致「拉取订阅」与「解析节点域名」死锁
+#   respect-rules          ★ 必须 false，否则国内 DNS 也被塞进代理而超时
+#   不要用 1.1.1.1/8.8.8.8 的 DoH（部分国内网络封这两个 IP 的 443）
+dns:
+  enable: true
+  listen: 127.0.0.1:1053
+  ipv6: false
+  enhanced-mode: redir-host
+  respect-rules: false
+  prefer-h3: false
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  direct-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  proxy-server-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+    - 114.114.114.114
+
+# ---------- 节点来源 ----------
+# 用 type: file 而非 http：因为很多机场的订阅是 base64 编码的原始链接，
+# mihomo 读不了，必须先由 mihomoctl.sh 调 parse_sub.py 转成 Clash 格式。
+proxy-providers:
+  nodes:
+    type: file
+    path: ./providers/nodes.yaml
+    health-check:
+      enable: true
+      url: http://1.1.1.1/cdn-cgi/trace   # 用 IP 目标，绕开 DNS 干扰，测得更准
+      interval: 300
+      timeout: 5000
+      lazy: true
+
+# ---------- 策略组 ----------
+proxy-groups:
+  - name: PROXY
+    type: url-test               # 自动选延迟最低
+    use:
+      - nodes
+    url: http://1.1.1.1/cdn-cgi/trace
+    interval: 300
+    timeout: 5000
+    tolerance: 50
+    lazy: true
+
+  - name: 手动选择
+    type: select
+    use:
+      - nodes
+    url: http://1.1.1.1/cdn-cgi/trace
+    interval: 300
+
+# ---------- 分流 ----------
+rules:
+  - GEOSITE,private,DIRECT
+  - GEOIP,private,DIRECT,no-resolve
+  - GEOSITE,category-ads-all,REJECT
+  - GEOSITE,cn,DIRECT
+  - GEOIP,CN,DIRECT
+  - GEOSITE,geolocation-!cn,PROXY
+  - MATCH,PROXY
+
+# ---------- 域名嗅探 ----------
+# 关键：客户端若把域名解析成了 IP，靠 sniff 从 TLS SNI / HTTP Host 还原真实域名，
+# 才能正确匹配上面的 GEOSITE 规则并交给节点远端解析（绕开本地 DNS 污染）。
+sniffer:
+  enable: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  override-destination: true
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+    TLS:
+      ports: [443, 8443]
+    QUIC:
+      ports: [443, 8443]
+  skip-domain:
+    - "Mijia Cloud"
+    - "+.push.apple.com"
