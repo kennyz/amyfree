@@ -32,10 +32,7 @@ func run(_ launchPath: String, _ args: [String], timeout: TimeInterval = 25) -> 
     p.arguments = args
     p.currentDirectoryPath = CFG_DIR
 
-    var env = ProcessInfo.processInfo.environment
-    // 关键：脚本内部调用 curl/grep 等，需要一个像样的 PATH
-    env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:\(HOME)/.local/bin"
-    p.environment = env
+    p.environment = AppRuntime.environment
 
     let outPipe = Pipe()
     p.standardOutput = outPipe
@@ -204,6 +201,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.accessory)   // 不占 Dock
 
+        do { try AppRuntime.prepare(directory: CFG_DIR) }
+        catch {
+            showResult(title: "无法准备运行组件", text: error.localizedDescription)
+            NSApp.terminate(nil)
+            return
+        }
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(systemSymbolName: "shield.lefthalf.filled",
                                            accessibilityDescription: "Amyfree")
@@ -228,6 +232,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if CommandLine.arguments.contains("--routing-settings") { showRoutingRules() }
         if CommandLine.arguments.contains("--node-speed") { showNodeSpeed() }
         if CommandLine.arguments.contains("--chain-settings") { showChainSettings() }
+        if !FileManager.default.fileExists(atPath: SUB_FILE) { editSubscription() }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -709,6 +714,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 }
 
 // MARK: - 入口
+
+if CommandLine.arguments.contains("--prepare-runtime") {
+    do {
+        guard try AppRuntime.prepare(directory: CFG_DIR) || FileManager.default.isExecutableFile(atPath: CTL) else {
+            throw RuntimeInstallError(message: "此构建未包含运行组件。")
+        }
+        print("运行组件已就绪")
+        exit(0)
+    } catch { fputs("\(error.localizedDescription)\n", stderr); exit(1) }
+}
 
 // 诊断命令使用与菜单完全相同的系统接口，便于核验登记状态。
 if let option = CommandLine.arguments.dropFirst().first,

@@ -22,6 +22,8 @@ config.yaml
 .mimio-chain.json
 .proxy-state
 .mihomo.pid
+.amyfree-runtime-version
+/mihomo/python3
 mihomo.log
 cache.db
 

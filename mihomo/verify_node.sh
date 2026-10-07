@@ -9,6 +9,8 @@
 # ============================================================
 set -uo pipefail
 
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ ! -x "$DIR/python3" ] || export PATH="$DIR:$PATH"
 PORT="${1:-7890}"; API="${2:-127.0.0.1:9090}"; SECRET="${3:-}"; NODE="${4:-}"; WANT="${5:-}"
 
 AUTH=()

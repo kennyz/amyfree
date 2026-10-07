@@ -10,6 +10,7 @@ set -uo pipefail
 umask 077
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ ! -x "$DIR/python3" ] || export PATH="$DIR:$PATH"
 BIN="$DIR/mihomo"
 CFG="$DIR/config.yaml"
 SUB_FILE="$DIR/.sub-url"

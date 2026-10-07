@@ -17,7 +17,8 @@ final class LocalNodeProbeBackend: NodeProbeBackend {
     func perform(_ arguments: [String]) throws -> [String: Any] {
         let initial = fingerprint()
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        task.executableURL = URL(fileURLWithPath: AppRuntime.python)
+        task.environment = AppRuntime.environment
         task.arguments = ["\(directory)/node_speed.py", "--home", directory] + arguments
         let output = Pipe()
         task.standardOutput = output

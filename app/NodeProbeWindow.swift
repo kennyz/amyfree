@@ -178,7 +178,7 @@ final class ChainWindowController: NSWindowController {
     func present() { showWindow(nil); window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     private func load() {
         DispatchQueue.global(qos: .utility).async {
-            let result = run("/usr/bin/python3", ["\(CFG_DIR)/chain_proxy.py", "status", "--home", CFG_DIR], timeout: 10)
+            let result = run(AppRuntime.python, ["\(CFG_DIR)/chain_proxy.py", "status", "--home", CFG_DIR], timeout: 10)
             let data = result.out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             DispatchQueue.main.async {
                 guard result.status == 0, let object = data, let names = object["names"] as? [String] else {
@@ -201,7 +201,7 @@ final class ChainWindowController: NSWindowController {
         [save, entry, exit, enabled].forEach { $0.isEnabled = false }
         status.stringValue = "正在校验并应用链式设置…"; status.textColor = .secondaryLabelColor
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = run("/usr/bin/python3", ["\(CFG_DIR)/chain_proxy.py", action, "--home", CFG_DIR, "--entry", first, "--exit", last], timeout: 90)
+            let result = run(AppRuntime.python, ["\(CFG_DIR)/chain_proxy.py", action, "--home", CFG_DIR, "--entry", first, "--exit", last], timeout: 90)
             let data = result.out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             DispatchQueue.main.async {
                 [self.save, self.entry, self.exit, self.enabled].forEach { $0.isEnabled = true }

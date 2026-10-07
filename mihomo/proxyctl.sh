@@ -13,6 +13,7 @@
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ ! -x "$DIR/python3" ] || export PATH="$DIR:$PATH"
 # 状态文件优先放脚本目录；该目录不可写时（受限沙箱等）退回临时目录
 STATE="$DIR/.proxy-state"
 if [ ! -w "$DIR" ]; then
