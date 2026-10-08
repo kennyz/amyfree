@@ -28,20 +28,33 @@ enum AppUpdater {
         return try UpdateRelease.parse(data, currentVersion: currentVersion)
     }
 
-    static func stage(_ update: AvailableUpdate) throws -> URL {
+    static func stage(_ update: AvailableUpdate, progress: @escaping (UpgradeProgress) -> Void = { _ in }) throws -> URL {
         guard AppVersion(update.tag) != nil,
               let script = Bundle.main.resourceURL?.appendingPathComponent("install.sh"),
               FileManager.default.fileExists(atPath: script.path) else {
             throw AppUpdateError(message: "请从 GitHub Release 安装正式版后使用在线更新。")
         }
-        let result = run("/bin/bash", [script.path, "--version", update.tag, "--stage-only"], timeout: 1000)
+        var work: URL?, verifying = false
+        let temporary = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true).resolvingSymlinksInPath()
+        let result = try UpgradeProcess.run("/bin/bash", [script.path, "--version", update.tag, "--stage-only"], timeout: 1200, output: { output in
+            for line in output.components(separatedBy: "\n").dropLast() {
+                if line.hasPrefix("AMYFREE_WORK=") {
+                    let candidate = URL(fileURLWithPath: String(line.dropFirst("AMYFREE_WORK=".count)), isDirectory: true).standardizedFileURL
+                    if candidate.lastPathComponent.hasPrefix("amyfree-install."), candidate.deletingLastPathComponent().resolvingSymlinksInPath() == temporary { work = candidate }
+                }
+                if line == "AMYFREE_PHASE=verify" { verifying = true }
+            }
+        }, tick: {
+            let bytes = work.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.appendingPathComponent("app.zip").path)[.size] as? NSNumber }?.int64Value ?? 0
+            progress(UpgradeProgress(received: bytes, total: update.downloadSize,
+                                     phase: verifying ? "校验签名并准备安装…" : "正在下载…"))
+        })
         guard result.status == 0,
-              let line = result.out.split(separator: "\n").last(where: { $0.hasPrefix("AMYFREE_STAGED=") }) else {
-            throw AppUpdateError(message: "下载或校验更新失败，当前版本继续可用。\n\(result.out.suffix(700))")
+              let line = result.text.split(separator: "\n").last(where: { $0.hasPrefix("AMYFREE_STAGED=") }) else {
+            throw AppUpdateError(message: "下载或校验更新失败，当前版本继续可用。\n\(result.text.suffix(700))")
         }
         let path = String(line.dropFirst("AMYFREE_STAGED=".count))
         let directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
-        let temporary = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true).resolvingSymlinksInPath()
         guard directory.lastPathComponent.hasPrefix("amyfree-install."),
               directory.deletingLastPathComponent().resolvingSymlinksInPath() == temporary,
               FileManager.default.fileExists(atPath: directory.appendingPathComponent("install.sh").path) else {

@@ -79,6 +79,7 @@ if [ -n "$STAGED" ]; then
   WORK="$(cd "$STAGED" && pwd -P)"
 else
   WORK="$(mktemp -d "${TMPDIR:-/tmp}/amyfree-install.XXXXXX")"
+  if [ "$STAGE_ONLY" = true ]; then echo "AMYFREE_WORK=$WORK"; fi
   if [ -z "$VERSION" ]; then
     echo '正在检查最新版本…' >&2
     fetch "https://api.github.com/repos/$REPO/releases/latest" "$WORK/release.json"
@@ -96,6 +97,7 @@ else
     ARCHIVE="$WORK/app.zip"
   fi
   [[ "$EXPECTED" =~ ^[0-9a-f]{64}$ ]] || die 'SHA-256 校验值无效。'
+  if [ "$STAGE_ONLY" = true ]; then echo 'AMYFREE_PHASE=verify'; fi
   [ "$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')" = "$EXPECTED" ] || die '下载文件校验失败。'
   unzip -Z1 "$ARCHIVE" > "$WORK/entries.txt"
   awk 'BEGIN {bad=0} /^\// || /(^|\/)\.\.(\/|$)/ {bad=1} !/^(Amyfree\.app(\/|$)|__MACOSX\/)/ {bad=1} END {exit bad}' "$WORK/entries.txt" || die '压缩包包含非法路径。'

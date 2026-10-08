@@ -39,9 +39,9 @@ with tempfile.TemporaryDirectory(prefix='amyfree-release-test-') as tmp:
     subprocess.run([str(python), '-m', 'unittest', 'discover', '-s', str(repo / 'tests'), '-p', 'test_*.py'], env=env, check=True)
     menu = subprocess.check_output([str(executable), '--menu-structure'], env=env, text=True)
     assert len(json.loads(menu)) > 0
-    assert '检查更新' in menu
+    assert '升级中心' in menu
     assert (moved / 'Contents/Resources/install.sh').is_file()
-    assert '更新规则库' in menu
+    assert '更新规则库' not in menu and '检查更新' not in menu
     assert (home / 'refresh-geodata.sh').is_file()
     assert (home / 'geodata_update.py').is_file()
     before = hashlib.sha256((home / 'config.yaml').read_bytes()).hexdigest()

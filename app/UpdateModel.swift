@@ -18,6 +18,7 @@ struct AppVersion: Comparable {
 struct AvailableUpdate {
     let tag: String
     let notes: String
+    var downloadSize: Int64 = 0
     var version: String { String(tag.dropFirst()) }
 }
 
@@ -35,7 +36,53 @@ enum UpdateRelease {
         guard expected.allSatisfy({ name in assets.filter { $0["name"] as? String == name && $0["state"] as? String == "uploaded" }.count == 1 }) else {
             throw AppUpdateError(message: "新版安装包尚未准备好，请稍后重试。")
         }
-        return AvailableUpdate(tag: tag, notes: String((object["body"] as? String ?? "").prefix(600)))
+        let archive = assets.first { $0["name"] as? String == expected[0] }
+        return AvailableUpdate(tag: tag, notes: String((object["body"] as? String ?? "").prefix(600)),
+                               downloadSize: (archive?["size"] as? NSNumber)?.int64Value ?? 0)
     }
 
+}
+
+struct UpgradeProgress {
+    var received: Int64 = 0
+    var total: Int64 = 0
+    var phase: String = "准备下载…"
+    var fraction: Double? { total > 0 ? min(1, max(0, Double(received) / Double(total))) : nil }
+    var text: String {
+        guard received > 0 || total > 0 else { return phase }
+        let downloaded = String(format: "%.1f MB", Double(received) / 1_000_000)
+        if let fraction = fraction {
+            return "\(phase) \(Int(fraction * 100))% · \(downloaded) / \(String(format: "%.1f MB", Double(total) / 1_000_000))"
+        }
+        return "\(phase) \(downloaded)"
+    }
+}
+
+struct UpgradeSchedule {
+    static let interval: TimeInterval = 86400
+    static func isDue(lastCheck: Date?, now: Date = Date()) -> Bool {
+        guard let lastCheck = lastCheck else { return true }
+        return now.timeIntervalSince(lastCheck) >= interval || lastCheck > now
+    }
+}
+
+enum UpgradeComponent: String, CaseIterable {
+    case application, geoip, geosite, mmdb
+    var title: String {
+        switch self { case .application: return "Amyfree"; case .geoip: return "GeoIP"; case .geosite: return "GeoSite"; case .mmdb: return "MMDB" }
+    }
+    var file: String? {
+        switch self { case .application: return nil; case .geoip: return "geoip.dat"; case .geosite: return "geosite.dat"; case .mmdb: return "country.mmdb" }
+    }
+    var detail: String {
+        switch self { case .application: return "应用版本"; case .geoip: return "IP 地理分流规则"; case .geosite: return "域名分流规则"; case .mmdb: return "IP 地理信息数据库" }
+    }
+}
+
+struct UpgradeRowState {
+    var available = false
+    var checking = false
+    var working = false
+    var message = "尚未检查"
+    var progress: UpgradeProgress?
 }

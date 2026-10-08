@@ -195,13 +195,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var probeStatusItem: NSMenuItem!
     var probeNowItem: NSMenuItem!
     var chainItem: NSMenuItem!
-    var updateItem: NSMenuItem!
-    var geodataItem: NSMenuItem!
-    var checkingUpdate = false
-    var installingUpdate = false
+    var upgradeItem: NSMenuItem!
+    var upgradeWindow: UpgradeCenterWindowController?
+    var upgradeBadge: NSView?
+    var lastUpgradeBadge: Bool?
     var updatingForRestart = false
-    var availableUpdate: AvailableUpdate?
     var updateTimer: Timer?
+    lazy var upgrades = UpgradeCoordinator(directory: CFG_DIR)
     lazy var probes = NodeProbeCoordinator(backend: LocalNodeProbeBackend(directory: CFG_DIR))
     let loginStartup = LoginStartupController()
 
@@ -240,8 +240,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if CommandLine.arguments.contains("--node-speed") { showNodeSpeed() }
         if CommandLine.arguments.contains("--chain-settings") { showChainSettings() }
         if !FileManager.default.fileExists(atPath: SUB_FILE) { editSubscription() }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { self.checkForUpdates(manual: false) }
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 86400, repeats: true) { _ in self.checkForUpdates(manual: false) }
+        upgrades.onChange = { [weak self] in self?.upgradeWindow?.update(); self?.updateUpgradeBadge() }
+        upgrades.onApplicationReady = { [weak self] directory in
+            guard let self = self else { throw AppUpdateError(message: "应用已退出，请重试。") }
+            try AppUpdater.handoff(directory)
+            self.updatingForRestart = true
+            self.probes.stop(); self.refreshTimer?.invalidate(); self.updateTimer?.invalidate()
+            NSApp.terminate(nil)
+        }
+        installUpgradeBadge()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { self.upgrades.automaticCheck() }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 900, repeats: true) { _ in self.upgrades.automaticCheck() }
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(checkUpgradesAfterWake), name: NSWorkspace.didWakeNotification, object: nil)
+        if CommandLine.arguments.contains("--upgrade-center") { showUpgradeCenter() }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -283,6 +294,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         probeStatusItem = NSMenuItem(title: "自动检测：每 30 秒", action: nil, keyEquivalent: "")
         probeStatusItem.isEnabled = false
         menu.addItem(action("节点测速…", #selector(showNodeSpeed), "d"))
+        upgradeItem = action("升级中心…", #selector(showUpgradeCenter))
+        menu.addItem(upgradeItem)
         menu.addItem(.separator())
 
         menu.addItem(submenu("订阅", [action("修改订阅地址…", #selector(editSubscription), "u"),
@@ -295,13 +308,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                        chainItem, .separator(), tunItem, loginItem]))
         exitIPItem = NSMenuItem(title: "出口 IP：—", action: nil, keyEquivalent: "")
         exitIPItem.isEnabled = false
-        updateItem = action("检查更新…", #selector(checkUpdate))
-        geodataItem = action("更新规则库…", #selector(updateGeodata))
         menu.addItem(submenu("工具", [exitIPItem, action("验证出口 IP…", #selector(doVerify), "v"), .separator(),
                                        action("打开终端（已配代理）", #selector(openTerminal)),
                                        action("查看日志", #selector(openLog), "l"),
                                        action("打开配置目录", #selector(openConfigDir)), .separator(),
-                                       geodataItem, updateItem,
                                        action("关于 Amyfree…", #selector(showAbout))]))
         menu.addItem(.separator())
         menu.addItem(action("退出 Amyfree", #selector(quitApp), "q"))
@@ -711,73 +721,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    @objc func checkUpdate() { checkForUpdates(manual: true) }
-
-    @objc func updateGeodata() {
-        guard !busy && !installingUpdate else { return }
-        busy = true; geodataItem.isEnabled = false
-        geodataItem.title = "正在更新规则库…"
-        DispatchQueue.global(qos: .utility).async {
-            let result = run("/bin/bash", ["\(CFG_DIR)/refresh-geodata.sh", CFG_DIR], timeout: 1800)
-            DispatchQueue.main.async {
-                self.busy = false; self.geodataItem.isEnabled = true
-                self.geodataItem.title = "更新规则库…"; self.refresh()
-                self.showResult(title: result.status == 0 ? "规则库更新结果" : "规则库更新未完成", text: result.out)
-            }
-        }
+    @objc func showUpgradeCenter() {
+        if upgradeWindow == nil { upgradeWindow = UpgradeCenterWindowController(coordinator: upgrades) }
+        upgradeWindow?.present()
+        if upgrades.lastCheck == nil { upgrades.check() }
     }
 
-    func checkForUpdates(manual: Bool) {
-        guard !checkingUpdate && !installingUpdate else { return }
-        checkingUpdate = true
-        updateItem.title = "正在检查更新…"; updateItem.isEnabled = false
-        DispatchQueue.global(qos: .utility).async {
-            let result = Result { try AppUpdater.check() }
-            DispatchQueue.main.async {
-                self.checkingUpdate = false; self.updateItem.isEnabled = true
-                switch result {
-                case .success(let update):
-                    self.availableUpdate = update
-                    self.updateItem.title = update.map { "更新到 \($0.version)…" } ?? "检查更新…"
-                    guard manual else { return }
-                    guard let update = update else {
-                        self.showResult(title: "已是最新版本", text: "当前版本：\(AppUpdater.currentVersion)")
-                        return
-                    }
-                    let alert = NSAlert()
-                    alert.messageText = "发现 Amyfree \(update.version)"
-                    alert.informativeText = "当前版本：\(AppUpdater.currentVersion)\n下载安装后会重新打开应用，订阅和设置将保留。\n\n\(update.notes)"
-                    alert.addButton(withTitle: "下载并安装"); alert.addButton(withTitle: "稍后")
-                    NSApp.activate(ignoringOtherApps: true)
-                    if alert.runModal() == .alertFirstButtonReturn { self.installUpdate(update) }
-                case .failure(let error):
-                    self.updateItem.title = "检查更新…"
-                    if manual { self.showResult(title: "检查更新失败", text: error.localizedDescription) }
-                }
-            }
-        }
+    @objc func checkUpgradesAfterWake() { upgrades.automaticCheck() }
+
+    func installUpgradeBadge() {
+        guard let button = statusItem.button else { return }
+        let badge = UpgradeBadgeView(frame: .zero)
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(badge)
+        NSLayoutConstraint.activate([badge.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 17),
+                                     badge.topAnchor.constraint(equalTo: button.topAnchor, constant: 2),
+                                     badge.widthAnchor.constraint(equalToConstant: 6), badge.heightAnchor.constraint(equalToConstant: 6)])
+        upgradeBadge = badge
+        updateUpgradeBadge()
     }
 
-    func installUpdate(_ update: AvailableUpdate) {
-        installingUpdate = true
-        updateItem.title = "正在下载并校验更新…"; updateItem.isEnabled = false
-        DispatchQueue.global(qos: .utility).async {
-            let result = Result { try AppUpdater.stage(update) }
-            DispatchQueue.main.async {
-                do {
-                    let directory = try result.get()
-                    do { try AppUpdater.handoff(directory) }
-                    catch { try? FileManager.default.removeItem(at: directory); throw error }
-                    self.updatingForRestart = true
-                    self.probes.stop(); self.refreshTimer?.invalidate(); self.updateTimer?.invalidate()
-                    NSApp.terminate(nil)
-                } catch {
-                    self.installingUpdate = false
-                    self.updateItem.title = "检查更新…"; self.updateItem.isEnabled = true
-                    self.showResult(title: "更新未完成", text: error.localizedDescription)
-                }
-            }
-        }
+    func updateUpgradeBadge() {
+        let available = upgrades.hasUpdates
+        guard lastUpgradeBadge != available else { return }
+        lastUpgradeBadge = available
+        upgradeBadge?.isHidden = !available
+        upgradeItem?.title = available ? "升级中心 · 有可用更新…" : "升级中心…"
+        upgradeItem?.image = available ? NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "有可用更新")?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.systemRed])) : nil
+        upgradeItem?.image?.isTemplate = false
+        statusItem?.button?.toolTip = available ? "Amyfree · 有可用更新，打开升级中心" : "Amyfree"
     }
 
     func showResult(title: String, text: String) {
@@ -796,6 +768,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 }
 
 // MARK: - 入口
+
+// Render-only diagnostic: no user preferences, runtime installation or network requests.
+if let index = CommandLine.arguments.firstIndex(of: "--render-upgrade-center"), CommandLine.arguments.indices.contains(index + 1) {
+    _ = NSApplication.shared
+    NSApp.setActivationPolicy(.prohibited)
+    let preferences = UserDefaults(suiteName: "AmyfreeUpgradePreview.\(UUID().uuidString)")!
+    let coordinator = UpgradeCoordinator(directory: CFG_DIR, defaults: preferences)
+    coordinator.preview(progress: CommandLine.arguments.contains("--preview-progress"))
+    let controller = UpgradeCenterWindowController(coordinator: coordinator)
+    let content = controller.window!.contentView!
+    content.layoutSubtreeIfNeeded()
+    let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
+    content.cacheDisplay(in: content.bounds, to: bitmap)
+    let rendered = NSImage(size: content.bounds.size)
+    rendered.lockFocus()
+    NSColor.windowBackgroundColor.setFill(); content.bounds.fill()
+    NSImage(cgImage: bitmap.cgImage!, size: content.bounds.size).draw(in: content.bounds)
+    rendered.unlockFocus()
+    let export = NSBitmapImageRep(data: rendered.tiffRepresentation!)!
+    try! export.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+    exit(0)
+}
 
 if CommandLine.arguments.contains("--prepare-runtime") {
     do {

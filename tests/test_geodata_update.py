@@ -83,5 +83,34 @@ class GeodataTests(unittest.TestCase):
             run.return_value.returncode = 22
             with self.assertRaises(geo.GeoUpdateError): geo.fetch('https://example.com/data', self.root / 'download')
 
+    def test_selected_database_only_and_real_progress_events(self):
+        requested = []
+        events = []
+        def track(url, path): requested.append(url); self.fetch(url, path)
+        def inspect(stage, core):
+            self.assertEqual((stage / 'geosite.dat').read_bytes(), self.before['geosite.dat'])
+            self.assertEqual((stage / 'country.mmdb').read_bytes(), self.before['country.mmdb'])
+        geo.update(self.root, track, inspect, selected=['geoip.dat'], progress=events.append)
+        self.assertEqual(len(requested), 2)
+        self.assertEqual((self.root / 'geoip.dat').read_bytes(), self.new['geoip.dat'])
+        for name in ['geosite.dat', 'country.mmdb']: self.assertEqual((self.root / name).read_bytes(), self.before[name])
+        downloaded = next(event for event in events if event.get('downloaded', 0) > 0)
+        self.assertEqual(downloaded['downloaded'], len(self.new['geoip.dat']))
+        self.assertEqual(downloaded['total'], len(self.new['geoip.dat']))
+        self.assertEqual(events[-1]['phase'], 'installing')
+
+    def test_metadata_check_fetches_no_databases_and_changes_nothing(self):
+        requested = []
+        def track(url, path): requested.append(url); self.fetch(url, path)
+        result = geo.check(self.root, track)
+        self.assertTrue(all(item['available'] for item in result.values()))
+        self.assertEqual(len(requested), 3)
+        self.assertTrue(all(url.endswith('.sha256sum') for url in requested))
+        self.unchanged()
+
+    def test_invalid_component_is_rejected(self):
+        with self.assertRaises(geo.GeoUpdateError): geo.update(self.root, self.fetch, selected=['../other'])
+        self.unchanged()
+
 
 if __name__ == '__main__': unittest.main()

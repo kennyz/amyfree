@@ -33,3 +33,16 @@ duplicate["assets"] = (release["assets"] as! [[String: String]]) + [["name": "SH
 rejects { _ = try UpdateRelease.parse(data(duplicate), currentVersion: "1.3.4") }
 rejects { _ = try UpdateRelease.parse(Data("invalid".utf8), currentVersion: "1.3.4") }
 print("PASS \(cases) update checks: version ordering, malformed input, stable releases, assets and release notes")
+
+let now = Date(timeIntervalSince1970: 100_000)
+check(UpgradeSchedule.isDue(lastCheck: nil, now: now))
+check(!UpgradeSchedule.isDue(lastCheck: now.addingTimeInterval(-86399), now: now))
+check(UpgradeSchedule.isDue(lastCheck: now.addingTimeInterval(-86400), now: now))
+check(UpgradeSchedule.isDue(lastCheck: now.addingTimeInterval(1), now: now))
+let progress = UpgradeProgress(received: 25, total: 100, phase: "下载")
+check(progress.fraction == 0.25)
+check(progress.text.contains("25%"))
+check(UpgradeProgress(received: 200, total: 100).fraction == 1)
+check(UpgradeProgress(received: 10, total: 0).fraction == nil)
+check(UpgradeComponent.allCases.count == 4)
+print("PASS schedule boundaries, clock changes, component mapping and download progress")

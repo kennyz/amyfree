@@ -259,3 +259,11 @@ sudo ./tun.sh on|off|status     # TUN 全局接管
 菜单「工具 → 更新规则库…」与 `bash scripts/refresh-geodata.sh ~/.config/mihomo` 使用同一组件。先下载 GeoIP/GeoSite/MMDB 及 SHA-256，再用本机内核分别检查 DAT/MMDB；全部通过才替换，保存失败自动恢复。更新不触碰订阅或配置，不中断当前连接，下次启动代理生效。`GEODATA_BASE` 可覆盖规则库源，源须同时提供同名 `.sha256sum` 文件。
 
 回归测试：`python3 -m unittest discover -s tests -p 'test_geodata_update.py'`。
+
+## 统一升级中心（1.5.0）
+
+菜单「升级中心」提供 Amyfree/GeoIP/GeoSite/MMDB 四个独立操作。应用安装助手通过实际 ZIP 字节数反馈进度；规则库组件输出 NDJSON 字节进度，可使用 `--check --json` 仅检查校验值，或 `--json --files geoip.dat` 单独更新。未选数据库参与格式验证但不替换。
+
+检查时间与逐项红点提示保存在 UserDefaults；每隔 24 小时检测，重启和唤醒后仍按上次时间调度。查看窗口不会清除红点，完成对应升级才清除；检查失败保留已知提醒。
+
+验证：`bash scripts/test-upgrade-center.sh`、`bash scripts/test-update.sh`、`python3 -m unittest discover -s tests -p 'test_geodata_update.py'`。界面离屏预览：`build/Amyfree.app/Contents/MacOS/Amyfree --render-upgrade-center build/upgrade-center.png`；追加 `--preview-progress` 可查看进度样式。
