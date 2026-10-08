@@ -196,6 +196,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var probeNowItem: NSMenuItem!
     var chainItem: NSMenuItem!
     var updateItem: NSMenuItem!
+    var geodataItem: NSMenuItem!
     var checkingUpdate = false
     var installingUpdate = false
     var updatingForRestart = false
@@ -295,11 +296,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         exitIPItem = NSMenuItem(title: "出口 IP：—", action: nil, keyEquivalent: "")
         exitIPItem.isEnabled = false
         updateItem = action("检查更新…", #selector(checkUpdate))
+        geodataItem = action("更新规则库…", #selector(updateGeodata))
         menu.addItem(submenu("工具", [exitIPItem, action("验证出口 IP…", #selector(doVerify), "v"), .separator(),
                                        action("打开终端（已配代理）", #selector(openTerminal)),
                                        action("查看日志", #selector(openLog), "l"),
                                        action("打开配置目录", #selector(openConfigDir)), .separator(),
-                                       updateItem,
+                                       geodataItem, updateItem,
                                        action("关于 Amyfree…", #selector(showAbout))]))
         menu.addItem(.separator())
         menu.addItem(action("退出 Amyfree", #selector(quitApp), "q"))
@@ -710,6 +712,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func checkUpdate() { checkForUpdates(manual: true) }
+
+    @objc func updateGeodata() {
+        guard !busy && !installingUpdate else { return }
+        busy = true; geodataItem.isEnabled = false
+        geodataItem.title = "正在更新规则库…"
+        DispatchQueue.global(qos: .utility).async {
+            let result = run("/bin/bash", ["\(CFG_DIR)/refresh-geodata.sh", CFG_DIR], timeout: 1800)
+            DispatchQueue.main.async {
+                self.busy = false; self.geodataItem.isEnabled = true
+                self.geodataItem.title = "更新规则库…"; self.refresh()
+                self.showResult(title: result.status == 0 ? "规则库更新结果" : "规则库更新未完成", text: result.out)
+            }
+        }
+    }
 
     func checkForUpdates(manual: Bool) {
         guard !checkingUpdate && !installingUpdate else { return }

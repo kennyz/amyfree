@@ -26,6 +26,10 @@ config.yaml
 .proxy-state
 .mihomo.pid
 .amyfree-runtime-version
+.geodata-update.lock
+.geodata-updated-at
+.geodata-update-*/
+.*.incoming
 /mihomo/python3
 mihomo.log
 cache.db

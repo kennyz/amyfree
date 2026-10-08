@@ -9,7 +9,7 @@ struct RuntimeInstallError: LocalizedError {
 enum AppRuntime {
     static let files = ["mihomoctl.sh", "proxyctl.sh", "tun.sh", "verify_node.sh",
                         "parse_sub.py", "subscription.py", "node_speed.py", "chain_proxy.py",
-                        "cert_probe.py", "nodes.py", "config.template.yaml",
+                        "cert_probe.py", "nodes.py", "geodata_update.py", "refresh-geodata.sh", "config.template.yaml",
                         "geoip.dat", "geosite.dat", "country.mmdb"]
 
     static var python: String {

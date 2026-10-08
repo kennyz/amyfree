@@ -41,6 +41,9 @@ with tempfile.TemporaryDirectory(prefix='amyfree-release-test-') as tmp:
     assert len(json.loads(menu)) > 0
     assert '检查更新' in menu
     assert (moved / 'Contents/Resources/install.sh').is_file()
+    assert '更新规则库' in menu
+    assert (home / 'refresh-geodata.sh').is_file()
+    assert (home / 'geodata_update.py').is_file()
     before = hashlib.sha256((home / 'config.yaml').read_bytes()).hexdigest()
     secret = (home / '.api-secret').read_bytes()
     subprocess.run([str(executable), '--prepare-runtime'], env=env, check=True)

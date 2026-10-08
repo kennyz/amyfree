@@ -19,8 +19,9 @@ with tempfile.TemporaryDirectory(prefix='amyfree-source-install-') as tmp:
         subprocess.run(['git', 'archive', 'HEAD'], cwd=repo, stdout=output, check=True)
     with tarfile.open(archive) as source:
         source.extractall(checkout, filter='data')
-    for name in ['install-source-runtime.sh', 'install-menubar.sh', 'fetch-deps.sh']:
+    for name in ['install-source-runtime.sh', 'install-menubar.sh', 'fetch-deps.sh', 'refresh-geodata.sh']:
         shutil.copyfile(repo / 'scripts' / name, checkout / 'scripts' / name)
+    shutil.copyfile(repo / 'mihomo/geodata_update.py', checkout / 'mihomo/geodata_update.py')
     assert not (checkout / 'mihomo/mihomo').exists()
     binary_dir = root / 'bin'; binary_dir.mkdir()
     fake_curl = binary_dir / 'curl'

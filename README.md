@@ -36,6 +36,8 @@ curl -fsSL https://raw.githubusercontent.com/kennyz/amyfree/main/scripts/install
 
 点击菜单栏盾牌 → **工具 → 检查更新… → 下载并安装**。应用会在启动后及每天自动检查新版；安装后自动重新打开，保留订阅和设置。`1.3.4` 及更早版本请先用上方命令或 DMG 更新一次。
 
+GeoIP、GeoSite 和 MMDB 也支持在线更新：**工具 → 更新规则库…**。自动校验，失败保留旧库；更新后重新启用代理生效。
+
 本软件不提供订阅或节点服务。开发与源码构建说明见 [开发文档](docs/DEVELOPMENT.md)。
 
 源码安装（需 Xcode Command Line Tools）：克隆仓库后执行 `bash scripts/build-app.sh && bash scripts/install-menubar.sh`，安装脚本会自动下载并安装内核和规则库。仅编译 App 不会安装运行依赖。

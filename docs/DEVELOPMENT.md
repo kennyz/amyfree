@@ -253,3 +253,9 @@ sudo ./tun.sh on|off|status     # TUN 全局接管
 更新模型测试：`bash scripts/test-update.sh`。安装器回归：`python3 scripts/test-installer.py`。签名包完整测试：`python3 scripts/test-release.py`。
 
 终端安装可指定位置及关闭自动打开：`bash scripts/install.sh --target /绝对路径/Amyfree.app --no-open`。
+
+## 在线更新规则库
+
+菜单「工具 → 更新规则库…」与 `bash scripts/refresh-geodata.sh ~/.config/mihomo` 使用同一组件。先下载 GeoIP/GeoSite/MMDB 及 SHA-256，再用本机内核分别检查 DAT/MMDB；全部通过才替换，保存失败自动恢复。更新不触碰订阅或配置，不中断当前连接，下次启动代理生效。`GEODATA_BASE` 可覆盖规则库源，源须同时提供同名 `.sha256sum` 文件。
+
+回归测试：`python3 -m unittest discover -s tests -p 'test_geodata_update.py'`。
