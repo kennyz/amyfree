@@ -20,6 +20,19 @@
 
 ## 快速开始
 
+菜单栏 App（M 系列 Mac，需 Xcode Command Line Tools）：
+
+```bash
+bash scripts/build-app.sh            # 编译打包到 build/
+bash scripts/install-menubar.sh      # 自动准备内核/规则库，装到 ~/Applications 并启动
+```
+
+源码构建的 App 不内置内核；安装脚本会自动补齐 `~/.config/mihomo` 中的内核、规则库和运行脚本，并保留已有订阅、密钥与配置。首次使用从菜单导入订阅即可。直接双击 `build/Amyfree.app` 前应先执行安装脚本。
+
+单独修复运行依赖：`bash scripts/install-source-runtime.sh`。
+
+仅命令行调试可按下面步骤操作；不要与菜单栏安装同时启动两个内核：
+
 ```bash
 # 1. 拉取依赖（内核 + 规则库 + 配置文件）
 bash scripts/fetch-deps.sh
@@ -34,14 +47,7 @@ cd mihomo && ./mihomoctl.sh start && ./mihomoctl.sh verify && cd ..
 ./mihomo/proxyctl.sh on
 ```
 
-菜单栏 App：
-
-```bash
-bash scripts/build-app.sh            # 编译打包到 build/
-bash scripts/install-menubar.sh      # 装到 ~/Applications 并启动
-```
-
-安装到标准位置（`~/.config/mihomo`）+ 开机自启：`bash scripts/install-mihomo.sh`
+需要独立内核 LaunchAgent 的高级用法仍可使用 `bash scripts/install-mihomo.sh`，普通菜单栏安装无需此步骤。
 
 ---
 

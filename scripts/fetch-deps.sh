@@ -15,7 +15,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="${1:-$REPO/mihomo}"
 
 MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.32}"
-GH_MIRROR="${GH_MIRROR:-https://gh-proxy.com/}"
+GH_MIRROR="${GH_MIRROR-https://gh-proxy.com/}"
 GEODATA_BASE="${GEODATA_BASE:-https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release}"
 
 # 按 CPU 架构选包
@@ -30,14 +30,22 @@ echo "=== 目标目录: $DEST ==="
 mkdir -p "$DEST/providers"
 
 # ---------- 1. mihomo 内核 ----------
-if [ -x "$DEST/mihomo" ]; then
+if [ -x "$DEST/mihomo" ] && "$DEST/mihomo" -v >/dev/null 2>&1; then
   echo "• mihomo 已存在，跳过（删除它可强制重下）"
 else
-  URL="${GH_MIRROR}https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/${ASSET}"
+  OFFICIAL_URL="https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/${ASSET}"
+  URL="${GH_MIRROR}${OFFICIAL_URL}"
   echo "=== 下载 mihomo ${MIHOMO_VERSION} ($ARCH) ==="
   echo "  $URL"
-  curl -L --max-time 300 --retry 3 -o "$DEST/mihomo.gz" "$URL"
-  gunzip -c "$DEST/mihomo.gz" > "$DEST/mihomo"
+  if ! curl -fL --connect-timeout 20 --max-time 300 --retry 3 -o "$DEST/mihomo.gz" "$URL"; then
+    [ -n "$GH_MIRROR" ] || exit 1
+    echo '镜像下载失败，尝试官方源…'
+    curl -fL --connect-timeout 20 --max-time 300 --retry 3 -o "$DEST/mihomo.gz" "$OFFICIAL_URL"
+  fi
+  gunzip -c "$DEST/mihomo.gz" > "$DEST/.mihomo-download"
+  chmod 755 "$DEST/.mihomo-download"
+  "$DEST/.mihomo-download" -v >/dev/null 2>&1 || { echo '✗ 下载的内核无法运行，未替换现有文件。' >&2; exit 1; }
+  mv -f "$DEST/.mihomo-download" "$DEST/mihomo"
   rm -f "$DEST/mihomo.gz"
   chmod 755 "$DEST/mihomo"
   echo "✓ 已解压 $(du -h "$DEST/mihomo" | cut -f1)"
@@ -56,8 +64,10 @@ for f in geoip.dat geosite.dat country.mmdb; do
     continue
   fi
   printf "  下载 %-14s " "$f"
-  curl -sSL --max-time 300 --retry 3 -o "$DEST/$f" "$GEODATA_BASE/$f" \
+  curl -fsSL --connect-timeout 20 --max-time 300 --retry 3 -o "$DEST/$f.part" "$GEODATA_BASE/$f" \
     -w "http=%{http_code} %{size_download} bytes\n"
+  [ -s "$DEST/$f.part" ] || { echo "✗ 规则库 $f 为空。" >&2; exit 1; }
+  mv -f "$DEST/$f.part" "$DEST/$f"
 done
 
 # ---------- 3. 配置文件 ----------

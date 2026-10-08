@@ -38,6 +38,8 @@ curl -fsSL https://raw.githubusercontent.com/kennyz/amyfree/main/scripts/install
 
 本软件不提供订阅或节点服务。开发与源码构建说明见 [开发文档](docs/DEVELOPMENT.md)。
 
+源码安装（需 Xcode Command Line Tools）：克隆仓库后执行 `bash scripts/build-app.sh && bash scripts/install-menubar.sh`，安装脚本会自动下载并安装内核和规则库。仅编译 App 不会安装运行依赖。
+
 ## 使用声明
 
 **本软件仅用于合法合规的科学上网、学习、科研和工作。禁止用于政治活动及任何违法违规目的。使用者应遵守所在地法律法规，并对自身使用行为负责。**

@@ -20,6 +20,11 @@ AGENT="$HOME/Library/LaunchAgents/com.user.mihomo.menubar.plist"
 
 [ -d "$SRC" ] || { echo "✗ 未找到 ${SRC}，请先运行: bash scripts/build-app.sh"; exit 1; }
 
+# A source-built app does not bundle the release runtime. Prepare all dependencies
+# before stopping or replacing the existing application.
+RUNTIME="${MIHOMO_HOME:-$HOME/.config/mihomo}"
+bash "$REPO/scripts/install-source-runtime.sh" "$RUNTIME"
+
 echo "=== 安装 $APP_NAME → $DEST ==="
 mkdir -p "$DEST_DIR" "$HOME/Library/LaunchAgents"
 
@@ -60,16 +65,6 @@ echo "✓ 已安装"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST"
 if [ "$RESTORE_LOGIN" = "true" ]; then
   "$DEST/Contents/MacOS/Amyfree" --enable-login
-fi
-
-# 更新运行脚本，保留用户的订阅、节点、DNS 和分流配置。
-RUNTIME="$HOME/.config/mihomo"
-if [ -d "$RUNTIME" ]; then
-  for file in mihomoctl.sh parse_sub.py subscription.py node_speed.py chain_proxy.py cert_probe.py; do
-    cp -f "$REPO/mihomo/$file" "$RUNTIME/$file"
-    chmod 755 "$RUNTIME/$file"
-  done
-  echo "✓ 订阅运行脚本已更新"
 fi
 
 # 旧版本安装脚本曾自动写入自启 plist；新版本由 SMAppService 按用户选择管理。

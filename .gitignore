@@ -1,5 +1,8 @@
 # 二进制 / 大数据文件（用 scripts/fetch-deps.sh 下载）
 /mihomo/mihomo
+/mihomo/.mihomo-download
+*.dat.part
+*.mmdb.part
 mihomo.gz
 geoip.dat
 geosite.dat
