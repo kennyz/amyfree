@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 func check(_ condition: Bool) { if !condition { fatalError("upgrade-center regression") } }
 let suite = "AmyfreeUpgradeTests.\(UUID().uuidString)"
@@ -47,3 +47,27 @@ let events = UpgradeCoordinator.events("{\"event\":\"progress\",\"downloaded\":1
 check(events.count == 2)
 check(events.first?["downloaded"] as? Int == 10)
 print("PASS daily checks across launches, concurrent-check guard, persistent per-component badges, post-upgrade clearing and offline reminder retention")
+
+_ = NSApplication.shared
+NSApp.setActivationPolicy(.prohibited)
+let visual = UpgradeCoordinator(directory: "/not-used", defaults: preferences, applicationCheck: { nil }, geodataCheck: { files })
+let controller = UpgradeCenterWindowController(coordinator: visual)
+func bars(_ view: NSView) -> [NSProgressIndicator] {
+    (view as? NSProgressIndicator).map { [$0] } ?? view.subviews.flatMap { bars($0) }
+}
+let indicators = bars(controller.window!.contentView!)
+check(indicators.count == 4)
+visual.check(); controller.update()
+check(indicators.allSatisfy { $0.isHidden })
+waitForCheck(visual)
+visual.preview(progress: true, application: true)
+for _ in 0..<30 { controller.update() }
+let visible = indicators.filter { !$0.isHidden }
+check(visible.count == 1)
+check(visible[0].isIndeterminate == false)
+check(abs(visible[0].doubleValue - 20.0 / 57.0) < 0.001)
+visual.preview(progress: true, application: false); controller.update()
+check(indicators.filter { !$0.isHidden }.count == 1)
+visual.preview(progress: false); controller.update()
+check(indicators.allSatisfy { $0.isHidden })
+print("PASS actual AppKit bars: checks stay static, app/database upgrades show one bar, repeated refreshes preserve inactive rows")

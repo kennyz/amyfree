@@ -295,7 +295,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         probeStatusItem.isEnabled = false
         menu.addItem(action("节点测速…", #selector(showNodeSpeed), "d"))
         upgradeItem = action("升级中心…", #selector(showUpgradeCenter))
-        menu.addItem(upgradeItem)
         menu.addItem(.separator())
 
         menu.addItem(submenu("订阅", [action("修改订阅地址…", #selector(editSubscription), "u"),
@@ -312,6 +311,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                        action("打开终端（已配代理）", #selector(openTerminal)),
                                        action("查看日志", #selector(openLog), "l"),
                                        action("打开配置目录", #selector(openConfigDir)), .separator(),
+                                       upgradeItem,
                                        action("关于 Amyfree…", #selector(showAbout))]))
         menu.addItem(.separator())
         menu.addItem(action("退出 Amyfree", #selector(quitApp), "q"))
@@ -775,7 +775,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-upgrade-center"), 
     NSApp.setActivationPolicy(.prohibited)
     let preferences = UserDefaults(suiteName: "AmyfreeUpgradePreview.\(UUID().uuidString)")!
     let coordinator = UpgradeCoordinator(directory: CFG_DIR, defaults: preferences)
-    coordinator.preview(progress: CommandLine.arguments.contains("--preview-progress"))
+    coordinator.preview(progress: CommandLine.arguments.contains("--preview-progress"), application: CommandLine.arguments.contains("--preview-application"))
     let controller = UpgradeCenterWindowController(coordinator: coordinator)
     let content = controller.window!.contentView!
     content.layoutSubtreeIfNeeded()

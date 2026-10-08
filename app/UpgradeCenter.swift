@@ -32,12 +32,12 @@ final class UpgradeCoordinator {
         }
     }
     private func changed() { onChange?() }
-    func preview(progress: Bool) {
-        rows[.application] = UpgradeRowState(available: true, message: "新版本 1.5.1 可升级")
-        rows[.geoip] = UpgradeRowState(available: progress, working: progress, message: "已是最新版本", progress: progress ? UpgradeProgress(received: 5_800_000, total: 16_500_000, phase: "正在下载…") : nil)
+    func preview(progress: Bool, application: Bool = false) {
+        rows[.application] = UpgradeRowState(available: true, working: progress && application, message: "有新版本可升级", progress: progress && application ? UpgradeProgress(received: 20_000_000, total: 57_000_000, phase: "正在下载…") : nil)
+        rows[.geoip] = UpgradeRowState(available: progress && !application, working: progress && !application, message: "已是最新版本", progress: progress && !application ? UpgradeProgress(received: 5_800_000, total: 16_500_000, phase: "正在下载…") : nil)
         rows[.geosite] = UpgradeRowState(available: true, message: "发现新版规则库")
         rows[.mmdb] = UpgradeRowState(message: "已是最新版本")
-        if progress { active = .geoip }
+        active = progress ? (application ? .application : .geoip) : nil
     }
     private func setAvailable(_ value: Bool, for component: UpgradeComponent) {
         rows[component]?.available = value
@@ -163,6 +163,7 @@ private final class UpgradeRowView: NSView {
     let detail = NSTextField(labelWithString: "")
     let state = NSTextField(wrappingLabelWithString: "尚未检查")
     let bar = NSProgressIndicator()
+    private var progressDisplay = UpgradeProgressDisplay.hidden
     let button = NSButton(title: "检查更新", target: nil, action: nil)
     init(_ component: UpgradeComponent) {
         self.component = component
@@ -189,6 +190,24 @@ private final class UpgradeRowView: NSView {
         ])
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func updateProgress(_ display: UpgradeProgressDisplay) {
+        guard display != progressDisplay else { return }
+        let previous = progressDisplay
+        switch display {
+        case .hidden:
+            if previous == .indeterminate { bar.stopAnimation(nil) }
+            bar.isHidden = true
+        case .indeterminate:
+            bar.isHidden = false; bar.isIndeterminate = true; bar.startAnimation(nil)
+        case .determinate(let fraction):
+            if case .determinate = previous {} else {
+                if previous == .indeterminate { bar.stopAnimation(nil) }
+                bar.isIndeterminate = false; bar.isHidden = false
+            }
+            bar.doubleValue = fraction
+        }
+        progressDisplay = display
+    }
 }
 
 final class UpgradeCenterWindowController: NSWindowController {
@@ -241,10 +260,7 @@ final class UpgradeCenterWindowController: NSWindowController {
             } else { local = "当前版本 \(AppUpdater.currentVersion)" }
             row.detail.stringValue = local
             row.state.stringValue = state.progress?.text ?? state.message
-            row.bar.isHidden = !state.working && !state.checking
-            row.bar.isIndeterminate = state.checking || state.progress?.fraction == nil
-            if row.bar.isIndeterminate && !row.bar.isHidden { row.bar.startAnimation(nil) }
-            else { row.bar.stopAnimation(nil); row.bar.doubleValue = state.progress?.fraction ?? 0 }
+            row.updateProgress(UpgradeProgressDisplay(state: state, isActive: coordinator.active == component))
             row.button.title = state.working ? "正在升级…" : component == .application ? (state.available ? "升级并重启" : "检查更新") : (state.available ? "升级规则库" : "重新下载")
             row.button.isEnabled = coordinator.active == nil && !coordinator.checking
             row.button.setAccessibilityLabel("\(component.title) · \(row.button.title)")

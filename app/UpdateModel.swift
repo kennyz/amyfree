@@ -86,3 +86,12 @@ struct UpgradeRowState {
     var message = "尚未检查"
     var progress: UpgradeProgress?
 }
+
+enum UpgradeProgressDisplay: Equatable {
+    case hidden, indeterminate, determinate(Double)
+    init(state: UpgradeRowState, isActive: Bool) {
+        guard isActive && state.working else { self = .hidden; return }
+        if let fraction = state.progress?.fraction { self = .determinate(fraction) }
+        else { self = .indeterminate }
+    }
+}
