@@ -195,6 +195,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var probeStatusItem: NSMenuItem!
     var probeNowItem: NSMenuItem!
     var chainItem: NSMenuItem!
+    var updateItem: NSMenuItem!
+    var checkingUpdate = false
+    var installingUpdate = false
+    var updatingForRestart = false
+    var availableUpdate: AvailableUpdate?
+    var updateTimer: Timer?
     lazy var probes = NodeProbeCoordinator(backend: LocalNodeProbeBackend(directory: CFG_DIR))
     let loginStartup = LoginStartupController()
 
@@ -233,6 +239,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if CommandLine.arguments.contains("--node-speed") { showNodeSpeed() }
         if CommandLine.arguments.contains("--chain-settings") { showChainSettings() }
         if !FileManager.default.fileExists(atPath: SUB_FILE) { editSubscription() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { self.checkForUpdates(manual: false) }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 86400, repeats: true) { _ in self.checkForUpdates(manual: false) }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -286,10 +294,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                        chainItem, .separator(), tunItem, loginItem]))
         exitIPItem = NSMenuItem(title: "出口 IP：—", action: nil, keyEquivalent: "")
         exitIPItem.isEnabled = false
+        updateItem = action("检查更新…", #selector(checkUpdate))
         menu.addItem(submenu("工具", [exitIPItem, action("验证出口 IP…", #selector(doVerify), "v"), .separator(),
                                        action("打开终端（已配代理）", #selector(openTerminal)),
                                        action("查看日志", #selector(openLog), "l"),
                                        action("打开配置目录", #selector(openConfigDir)), .separator(),
+                                       updateItem,
                                        action("关于 Amyfree…", #selector(showAbout))]))
         menu.addItem(.separator())
         menu.addItem(action("退出 Amyfree", #selector(quitApp), "q"))
@@ -692,9 +702,65 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         probes.stop()
+        if updatingForRestart { return }
         // 兜底：正常退出路径都清理一次
         if systemProxyAnyOn() {
             _ = run("/bin/bash", ["\(CFG_DIR)/proxyctl.sh", "off"])
+        }
+    }
+
+    @objc func checkUpdate() { checkForUpdates(manual: true) }
+
+    func checkForUpdates(manual: Bool) {
+        guard !checkingUpdate && !installingUpdate else { return }
+        checkingUpdate = true
+        updateItem.title = "正在检查更新…"; updateItem.isEnabled = false
+        DispatchQueue.global(qos: .utility).async {
+            let result = Result { try AppUpdater.check() }
+            DispatchQueue.main.async {
+                self.checkingUpdate = false; self.updateItem.isEnabled = true
+                switch result {
+                case .success(let update):
+                    self.availableUpdate = update
+                    self.updateItem.title = update.map { "更新到 \($0.version)…" } ?? "检查更新…"
+                    guard manual else { return }
+                    guard let update = update else {
+                        self.showResult(title: "已是最新版本", text: "当前版本：\(AppUpdater.currentVersion)")
+                        return
+                    }
+                    let alert = NSAlert()
+                    alert.messageText = "发现 Amyfree \(update.version)"
+                    alert.informativeText = "当前版本：\(AppUpdater.currentVersion)\n下载安装后会重新打开应用，订阅和设置将保留。\n\n\(update.notes)"
+                    alert.addButton(withTitle: "下载并安装"); alert.addButton(withTitle: "稍后")
+                    NSApp.activate(ignoringOtherApps: true)
+                    if alert.runModal() == .alertFirstButtonReturn { self.installUpdate(update) }
+                case .failure(let error):
+                    self.updateItem.title = "检查更新…"
+                    if manual { self.showResult(title: "检查更新失败", text: error.localizedDescription) }
+                }
+            }
+        }
+    }
+
+    func installUpdate(_ update: AvailableUpdate) {
+        installingUpdate = true
+        updateItem.title = "正在下载并校验更新…"; updateItem.isEnabled = false
+        DispatchQueue.global(qos: .utility).async {
+            let result = Result { try AppUpdater.stage(update) }
+            DispatchQueue.main.async {
+                do {
+                    let directory = try result.get()
+                    do { try AppUpdater.handoff(directory) }
+                    catch { try? FileManager.default.removeItem(at: directory); throw error }
+                    self.updatingForRestart = true
+                    self.probes.stop(); self.refreshTimer?.invalidate(); self.updateTimer?.invalidate()
+                    NSApp.terminate(nil)
+                } catch {
+                    self.installingUpdate = false
+                    self.updateItem.title = "检查更新…"; self.updateItem.isEnabled = true
+                    self.showResult(title: "更新未完成", text: error.localizedDescription)
+                }
+            }
         }
     }
 

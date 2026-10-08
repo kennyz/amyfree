@@ -45,6 +45,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$OUT/Amyfree" "$APP/Contents/MacOS/"
 cp "$APP_SRC/Info.plist" "$APP/Contents/"
+cp "$REPO/scripts/install.sh" "$APP/Contents/Resources/install.sh"
 chmod +x "$APP/Contents/MacOS/Amyfree"
 
 echo "=== 生成应用图标 ==="

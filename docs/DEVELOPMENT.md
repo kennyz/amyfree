@@ -239,3 +239,11 @@ sudo ./tun.sh on|off|status     # TUN 全局接管
 如已配置 Apple 公证凭据，使用 `NOTARY_PROFILE=钥匙串配置名 bash scripts/build-release.sh` 完成公证和票据装订。未提供 profile 时仅正式签名，不宣称已公证。签名身份也可通过 `CODE_SIGN_IDENTITY` 指定。
 
 首次启动初始化与升级保留回归：`bash scripts/test-runtime.sh`。
+
+## 在线更新与安装器
+
+`scripts/install.sh` 只依赖 macOS 系统工具，支持从稳定 Release 下载，SHA-256、固定 Developer ID/team/bundle identity 校验，以及保留旧应用的替换事务。默认安装到已有位置，或 `/Applications` / `~/Applications`，不使用 sudo。应用内更新使用已签名包中的同一脚本，后台暂存后交给临时助手等待旧进程退出再替换并重开，不关闭正在使用的代理内核。失败日志在 `~/Library/Logs/Amyfree-update.log`。
+
+更新模型测试：`bash scripts/test-update.sh`。安装器回归：`python3 scripts/test-installer.py`。签名包完整测试：`python3 scripts/test-release.py`。
+
+终端安装可指定位置及关闭自动打开：`bash scripts/install.sh --target /绝对路径/Amyfree.app --no-open`。

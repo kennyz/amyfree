@@ -1,0 +1,35 @@
+import Foundation
+
+var cases = 0
+func check(_ condition: Bool) { if !condition { fatalError("update regression") }; cases += 1 }
+func rejects(_ body: () throws -> Void) {
+    do { try body(); fatalError("invalid release was accepted") } catch { cases += 1 }
+}
+check(AppVersion("v1.10.0")! > AppVersion("1.9.99")!)
+check(AppVersion("1.4.0")! == AppVersion("v1.4.0")!)
+for text in ["1.2", "1.2.3-beta", "v1.2.3/path", "1.2.3\n", "1.2.3;open", "999999999999.2.3", ""] {
+    check(AppVersion(text) == nil)
+}
+let release: [String: Any] = ["draft": false, "prerelease": false, "tag_name": "v1.4.0", "body": String(repeating: "x", count: 700),
+                             "assets": [["name": "Amyfree-1.4.0-macOS-arm64.zip", "state": "uploaded"], ["name": "SHA256SUMS.txt", "state": "uploaded"]]]
+func data(_ value: [String: Any]) throws -> Data { try JSONSerialization.data(withJSONObject: value) }
+let update = try UpdateRelease.parse(data(release), currentVersion: "1.3.4")
+check(update?.version == "1.4.0")
+check(update?.notes.count == 600)
+check(try UpdateRelease.parse(data(release), currentVersion: "1.4.0") == nil)
+check(try UpdateRelease.parse(data(release), currentVersion: "2.0.0") == nil)
+for field in ["draft", "prerelease"] {
+    var value = release; value[field] = true
+    rejects { _ = try UpdateRelease.parse(data(value), currentVersion: "1.3.4") }
+}
+for tag in ["https://example.com", "v1.4.0\n", "v1.4.0;open", "v1.4.0-beta"] {
+    var value = release; value["tag_name"] = tag
+    rejects { _ = try UpdateRelease.parse(data(value), currentVersion: "1.3.4") }
+}
+var missing = release; missing["assets"] = []
+rejects { _ = try UpdateRelease.parse(data(missing), currentVersion: "1.3.4") }
+var duplicate = release
+duplicate["assets"] = (release["assets"] as! [[String: String]]) + [["name": "SHA256SUMS.txt", "state": "uploaded"]]
+rejects { _ = try UpdateRelease.parse(data(duplicate), currentVersion: "1.3.4") }
+rejects { _ = try UpdateRelease.parse(Data("invalid".utf8), currentVersion: "1.3.4") }
+print("PASS \(cases) update checks: version ordering, malformed input, stable releases, assets and release notes")

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import plistlib
 from pathlib import Path
 import socket
 import subprocess
@@ -11,8 +12,10 @@ import tempfile
 import time
 import urllib.request
 
-artifact = Path(sys.argv[1] if len(sys.argv) > 1 else 'build/release/Amyfree-1.3.4-macOS-arm64.zip').resolve()
 repo = Path(__file__).resolve().parents[1]
+with (repo / 'app/Info.plist').open('rb') as info:
+    version = plistlib.load(info)['CFBundleShortVersionString']
+artifact = Path(sys.argv[1] if len(sys.argv) > 1 else repo / f'build/release/Amyfree-{version}-macOS-arm64.zip').resolve()
 forbidden = {'.api-secret', '.sub-url', '.sub-raw', 'config.yaml', '.run-config.yaml', '.mimio-chain.json', 'nodes.yaml'}
 with tempfile.TemporaryDirectory(prefix='amyfree-release-test-') as tmp:
     root = Path(tmp)
@@ -36,6 +39,8 @@ with tempfile.TemporaryDirectory(prefix='amyfree-release-test-') as tmp:
     subprocess.run([str(python), '-m', 'unittest', 'discover', '-s', str(repo / 'tests'), '-p', 'test_*.py'], env=env, check=True)
     menu = subprocess.check_output([str(executable), '--menu-structure'], env=env, text=True)
     assert len(json.loads(menu)) > 0
+    assert '检查更新' in menu
+    assert (moved / 'Contents/Resources/install.sh').is_file()
     before = hashlib.sha256((home / 'config.yaml').read_bytes()).hexdigest()
     secret = (home / '.api-secret').read_bytes()
     subprocess.run([str(executable), '--prepare-runtime'], env=env, check=True)
