@@ -32,12 +32,13 @@ final class UpgradeCoordinator {
         }
     }
     private func changed() { onChange?() }
-    func preview(progress: Bool, application: Bool = false) {
+    func preview(progress: Bool, application: Bool = false, knownTotal: Bool = true) {
         rows[.application] = UpgradeRowState(available: true, working: progress && application, message: "有新版本可升级", progress: progress && application ? UpgradeProgress(received: 20_000_000, total: 57_000_000, phase: "正在下载…") : nil)
         rows[.geoip] = UpgradeRowState(available: progress && !application, working: progress && !application, message: "已是最新版本", progress: progress && !application ? UpgradeProgress(received: 5_800_000, total: 16_500_000, phase: "正在下载…") : nil)
         rows[.geosite] = UpgradeRowState(available: true, message: "发现新版规则库")
         rows[.mmdb] = UpgradeRowState(message: "已是最新版本")
         active = progress ? (application ? .application : .geoip) : nil
+        if !knownTotal, let active = active { rows[active]?.progress?.total = 0 }
     }
     private func setAvailable(_ value: Bool, for component: UpgradeComponent) {
         rows[component]?.available = value
@@ -146,7 +147,8 @@ final class UpgradeCoordinator {
     private func report(_ progress: UpgradeProgress, for component: UpgradeComponent) {
         DispatchQueue.main.async {
             guard self.active == component else { return }
-            self.rows[component]?.progress = progress; self.rows[component]?.message = progress.phase; self.changed()
+            let displayed = progress.retainingDownload(from: self.rows[component]?.progress)
+            self.rows[component]?.progress = displayed; self.rows[component]?.message = progress.phase; self.changed()
         }
     }
     private func finish(_ component: UpgradeComponent, message: String = "", error: Error? = nil) {
@@ -156,13 +158,28 @@ final class UpgradeCoordinator {
     }
 }
 
+final class UpgradeDownloadBar: NSView {
+    var fraction: Double = 0 {
+        didSet { if fraction != oldValue { needsDisplay = true } }
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.quaternaryLabelColor.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 2.5, yRadius: 2.5).fill()
+        let amount = min(1, max(0, fraction))
+        guard amount > 0 else { return }
+        NSColor.controlAccentColor.setFill()
+        let fill = NSRect(x: bounds.minX, y: bounds.minY, width: bounds.width * amount, height: bounds.height)
+        NSBezierPath(roundedRect: fill, xRadius: 2.5, yRadius: 2.5).fill()
+    }
+}
+
 private final class UpgradeRowView: NSView {
     let component: UpgradeComponent
     let dot = NSTextField(labelWithString: "●")
     let title = NSTextField(labelWithString: "")
     let detail = NSTextField(labelWithString: "")
     let state = NSTextField(wrappingLabelWithString: "尚未检查")
-    let bar = NSProgressIndicator()
+    let bar = UpgradeDownloadBar()
     private var progressDisplay = UpgradeProgressDisplay.hidden
     let button = NSButton(title: "检查更新", target: nil, action: nil)
     init(_ component: UpgradeComponent) {
@@ -175,7 +192,7 @@ private final class UpgradeRowView: NSView {
         state.font = .systemFont(ofSize: 12); state.maximumNumberOfLines = 2; state.textColor = .secondaryLabelColor
         dot.textColor = .systemRed; dot.font = .systemFont(ofSize: 9); dot.isHidden = true
         dot.setAccessibilityLabel("有可用更新")
-        bar.style = .bar; bar.minValue = 0; bar.maxValue = 1; bar.isHidden = true
+        bar.isHidden = true
         button.bezelStyle = .rounded
         for view in [dot, title, detail, state, bar, button] { addSubview(view); view.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
@@ -192,19 +209,11 @@ private final class UpgradeRowView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     func updateProgress(_ display: UpgradeProgressDisplay) {
         guard display != progressDisplay else { return }
-        let previous = progressDisplay
         switch display {
         case .hidden:
-            if previous == .indeterminate { bar.stopAnimation(nil) }
             bar.isHidden = true
-        case .indeterminate:
-            bar.isHidden = false; bar.isIndeterminate = true; bar.startAnimation(nil)
         case .determinate(let fraction):
-            if case .determinate = previous {} else {
-                if previous == .indeterminate { bar.stopAnimation(nil) }
-                bar.isIndeterminate = false; bar.isHidden = false
-            }
-            bar.doubleValue = fraction
+            bar.isHidden = false; bar.fraction = fraction
         }
         progressDisplay = display
     }

@@ -52,8 +52,8 @@ _ = NSApplication.shared
 NSApp.setActivationPolicy(.prohibited)
 let visual = UpgradeCoordinator(directory: "/not-used", defaults: preferences, applicationCheck: { nil }, geodataCheck: { files })
 let controller = UpgradeCenterWindowController(coordinator: visual)
-func bars(_ view: NSView) -> [NSProgressIndicator] {
-    (view as? NSProgressIndicator).map { [$0] } ?? view.subviews.flatMap { bars($0) }
+func bars(_ view: NSView) -> [UpgradeDownloadBar] {
+    (view as? UpgradeDownloadBar).map { [$0] } ?? view.subviews.flatMap { bars($0) }
 }
 let indicators = bars(controller.window!.contentView!)
 check(indicators.count == 4)
@@ -64,8 +64,10 @@ visual.preview(progress: true, application: true)
 for _ in 0..<30 { controller.update() }
 let visible = indicators.filter { !$0.isHidden }
 check(visible.count == 1)
-check(visible[0].isIndeterminate == false)
-check(abs(visible[0].doubleValue - 20.0 / 57.0) < 0.001)
+check(abs(visible[0].fraction - 20.0 / 57.0) < 0.001)
+visual.preview(progress: true, application: true, knownTotal: false); controller.update()
+check(indicators.allSatisfy { $0.isHidden })
+check(visual.rows[.application]?.progress?.text.contains("已下载") == true)
 visual.preview(progress: true, application: false); controller.update()
 check(indicators.filter { !$0.isHidden }.count == 1)
 visual.preview(progress: false); controller.update()

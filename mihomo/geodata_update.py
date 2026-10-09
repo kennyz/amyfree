@@ -21,6 +21,45 @@ class GeoUpdateError(Exception):
     pass
 
 
+def public_metadata(url):
+    try:
+        result = subprocess.run(['curl', '-fLsS', '--connect-timeout', '8', '--max-time', '15',
+                                 '--proto', '=https', '--proto-redir', '=https', url],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+        if result.returncode == 0:
+            value = json.loads(result.stdout)
+            return value if isinstance(value, dict) else {}
+    except (ValueError, subprocess.TimeoutExpired):
+        pass
+    return {}
+
+
+def resolve_source(base):
+    # Pin all files to one revision so the size and checksum refer to the same data.
+    if base == DEFAULT_BASE:
+        metadata = public_metadata('https://api.github.com/repos/MetaCubeX/meta-rules-dat/commits/release')
+        revision = metadata.get('sha', '')
+        if isinstance(revision, str) and re.fullmatch('[0-9a-f]{40}', revision): return base.replace('@release', '@' + revision)
+    return base
+
+
+def remote_size(url):
+    match = re.fullmatch(r'https://testingcf\.jsdelivr\.net/gh/MetaCubeX/meta-rules-dat@([0-9a-f]{40})/(geoip\.dat|geosite\.dat|country\.mmdb)', url)
+    if match:
+        revision, name = match.groups()
+        metadata = public_metadata('https://api.github.com/repos/MetaCubeX/meta-rules-dat/contents/' + name + '?ref=' + revision)
+        size = metadata.get('size', 0)
+        return size if isinstance(size, int) and size > 0 else 0
+    return 0
+
+
+def response_size(headers):
+    responses = [block for block in re.split(r'\r?\n\r?\n', headers) if block.startswith('HTTP/')]
+    if not responses or not re.match(r'HTTP/\S+\s+2\d\d\b', responses[-1]): return 0
+    match = re.search(r'(?im)^content-length:\s*(\d+)', responses[-1])
+    return int(match.group(1)) if match else 0
+
+
 def fetch(url, target, progress=None):
     args = ['curl', '-fLsS', '--connect-timeout', '20', '--max-time', '180', '--retry', '2',
             '--proto', '=https', '--proto-redir', '=https', url, '-o', str(target)]
@@ -28,18 +67,22 @@ def fetch(url, target, progress=None):
         result = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
         code = result.returncode
     else:
+        known_total = remote_size(url)
+        progress(0, known_total)
         headers = target.with_name(target.name + '.headers')
         process = subprocess.Popen(args + ['--dump-header', str(headers)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.monotonic() + 600
         try:
             while True:
-                sizes = re.findall(r'(?im)^content-length:\s*(\d+)', headers.read_text(errors='replace')) if headers.exists() else []
-                total = int(sizes[-1]) if sizes else 0
+                total = known_total or (response_size(headers.read_text(errors='replace')) if headers.exists() else 0)
                 progress(target.stat().st_size if target.exists() else 0, total)
                 if process.poll() is not None: break
                 if time.monotonic() > deadline: raise GeoUpdateError('下载超时，请稍后重试。')
                 time.sleep(.15)
             code = process.returncode
+            if code == 0:
+                completed = target.stat().st_size
+                progress(completed, completed)
         finally:
             if process.poll() is None:
                 process.terminate()
@@ -61,6 +104,7 @@ def checksum(base, name, stage, download):
 def check(directory, download=fetch):
     directory = Path(directory).resolve()
     base = os.environ.get('GEODATA_BASE', DEFAULT_BASE).rstrip('/')
+    if download is fetch: base = resolve_source(base)
     result = {}
     with tempfile.TemporaryDirectory(prefix='amyfree-geo-check-') as tmp:
         for name in FILES:
@@ -110,6 +154,7 @@ def update(directory, download=fetch, validator=validate, replacer=replace, sele
         with tempfile.TemporaryDirectory(prefix='.geodata-update-', dir=directory) as tmp:
             stage = Path(tmp)
             base = os.environ.get('GEODATA_BASE', DEFAULT_BASE).rstrip('/')
+            if download is fetch: base = resolve_source(base)
             for name in FILES:
                 if name not in selected:
                     if not (directory / name).is_file(): raise GeoUpdateError('缺少其他规则库，请先完整安装 Amyfree。')

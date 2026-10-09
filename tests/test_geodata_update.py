@@ -112,5 +112,41 @@ class GeodataTests(unittest.TestCase):
         with self.assertRaises(geo.GeoUpdateError): geo.update(self.root, self.fetch, selected=['../other'])
         self.unchanged()
 
+    def test_revision_is_pinned_before_requesting_size(self):
+        revision = 'a' * 40
+        with patch.object(geo, 'public_metadata', return_value={'sha': revision}):
+            self.assertEqual(geo.resolve_source(geo.DEFAULT_BASE), geo.DEFAULT_BASE.replace('@release', '@' + revision))
+        with patch.object(geo, 'public_metadata', return_value={'size': 100}):
+            self.assertEqual(geo.remote_size(geo.DEFAULT_BASE.replace('@release', '@' + revision) + '/geoip.dat'), 100)
+        with patch.object(geo, 'public_metadata', return_value={}):
+            self.assertEqual(geo.resolve_source(geo.DEFAULT_BASE), geo.DEFAULT_BASE)
+            self.assertEqual(geo.remote_size(geo.DEFAULT_BASE.replace('@release', '@' + revision) + '/geoip.dat'), 0)
+
+    def test_chunked_download_uses_metadata_size_and_reports_exact_completion(self):
+        target = self.root / 'download'
+        events = []
+        class Download:
+            returncode = None
+            polls = 0
+            def __init__(self, args, **kwargs):
+                target.write_bytes(b'a' * 40)
+                Path(args[args.index('--dump-header') + 1]).write_text('HTTP/2 200\n\n')
+            def poll(self):
+                self.polls += 1
+                if self.polls == 1:
+                    target.write_bytes(b'a' * 100)
+                    return None
+                self.returncode = 0
+                return 0
+        with patch.object(geo, 'remote_size', return_value=100), patch.object(geo.subprocess, 'Popen', Download):
+            geo.fetch('https://example.com/data', target, lambda received, total: events.append((received, total)))
+        self.assertIn((40, 100), events)
+        self.assertEqual(events[-1], (100, 100))
+
+    def test_redirect_body_size_cannot_become_download_size(self):
+        headers = 'HTTP/2 302\ncontent-length: 185\n\nHTTP/2 200\ntransfer-encoding: chunked\n\n'
+        self.assertEqual(geo.response_size(headers), 0)
+        self.assertEqual(geo.response_size(headers.replace('transfer-encoding: chunked', 'content-length: 100')), 100)
+
 
 if __name__ == '__main__': unittest.main()

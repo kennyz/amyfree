@@ -54,7 +54,11 @@ struct UpgradeProgress {
         if let fraction = fraction {
             return "\(phase) \(Int(fraction * 100))% · \(downloaded) / \(String(format: "%.1f MB", Double(total) / 1_000_000))"
         }
-        return "\(phase) \(downloaded)"
+        return "\(phase) 已下载 \(downloaded)"
+    }
+    func retainingDownload(from previous: UpgradeProgress?) -> UpgradeProgress {
+        guard total == 0 && received == 0 && phase != "正在下载…", let previous = previous else { return self }
+        return UpgradeProgress(received: previous.received, total: previous.total, phase: phase)
     }
 }
 
@@ -88,10 +92,10 @@ struct UpgradeRowState {
 }
 
 enum UpgradeProgressDisplay: Equatable {
-    case hidden, indeterminate, determinate(Double)
+    case hidden, determinate(Double)
     init(state: UpgradeRowState, isActive: Bool) {
         guard isActive && state.working else { self = .hidden; return }
         if let fraction = state.progress?.fraction { self = .determinate(fraction) }
-        else { self = .indeterminate }
+        else { self = .hidden }
     }
 }
