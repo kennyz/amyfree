@@ -22,6 +22,11 @@ class SubscriptionError(ValueError):
     pass
 
 
+def t(zh, en):
+    """提示语言：AMYFREE_LANG=en 输出英文，默认中文（菜单栏 App 按界面语言传入）。"""
+    return en if os.environ.get('AMYFREE_LANG') == 'en' else zh
+
+
 def load_yaml(text):
     """禁止任意对象构造；不在错误消息中回显订阅或节点凭据。"""
     try:
@@ -29,7 +34,7 @@ def load_yaml(text):
     except ImportError:
         ruby = '/usr/bin/ruby'
         if not os.path.isfile(ruby):
-            raise SubscriptionError('此环境缺少安全 YAML 解析器，请安装 PyYAML 后重试。')
+            raise SubscriptionError(t('此环境缺少安全 YAML 解析器，请安装 PyYAML 后重试。', 'No safe YAML parser is available here. Install PyYAML and try again.'))
         code = '''require "json"
 require "psych"
 begin
@@ -48,14 +53,14 @@ end
         try:
             result = subprocess.run([ruby, '-e', code], input=text, capture_output=True, text=True, timeout=15)
             if result.returncode:
-                raise SubscriptionError('订阅 YAML 格式不正确或含不支持的对象。')
+                raise SubscriptionError(t('订阅 YAML 格式不正确或含不支持的对象。', 'The subscription YAML is malformed or contains unsupported objects.'))
             return json.loads(result.stdout)
         except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
-            raise SubscriptionError('无法安全解析订阅 YAML。') from None
+            raise SubscriptionError(t('无法安全解析订阅 YAML。', 'Could not safely parse the subscription YAML.')) from None
     try:
         return yaml.safe_load(text)
     except Exception:
-        raise SubscriptionError('订阅 YAML 格式不正确或含不支持的对象。') from None
+        raise SubscriptionError(t('订阅 YAML 格式不正确或含不支持的对象。', 'The subscription YAML is malformed or contains unsupported objects.')) from None
 
 
 def plain_data(value, ancestors=None):
@@ -67,11 +72,11 @@ def plain_data(value, ancestors=None):
         return
     if isinstance(value, (dict, list)):
         if id(value) in ancestors:
-            raise SubscriptionError('节点配置包含循环引用。')
+            raise SubscriptionError(t('节点配置包含循环引用。', 'The node config contains a circular reference.'))
         ancestors.add(id(value))
         if isinstance(value, dict):
             if not all(isinstance(key, str) for key in value):
-                raise SubscriptionError('节点配置字段名必须是字符串。')
+                raise SubscriptionError(t('节点配置字段名必须是字符串。', 'Node config field names must be strings.'))
             children = value.values()
         else:
             children = value
@@ -79,28 +84,28 @@ def plain_data(value, ancestors=None):
             plain_data(child, ancestors)
         ancestors.remove(id(value))
         return
-    raise SubscriptionError('节点配置包含不支持的数据类型。')
+    raise SubscriptionError(t('节点配置包含不支持的数据类型。', 'The node config contains an unsupported data type.'))
 
 
 def validate_proxies(proxies):
     if not isinstance(proxies, list) or not proxies:
-        raise SubscriptionError('订阅中没有可用的 proxies 节点列表。')
+        raise SubscriptionError(t('订阅中没有可用的 proxies 节点列表。', 'The subscription has no usable proxies list.'))
     plain_data(proxies)
     names = set()
     for index, proxy in enumerate(proxies, 1):
         if not isinstance(proxy, dict):
-            raise SubscriptionError(f'第 {index} 个节点不是有效配置。')
+            raise SubscriptionError(t(f'第 {index} 个节点不是有效配置。', f'Node {index} is not a valid config.'))
         for key in ('name', 'type'):
             if not isinstance(proxy.get(key), str) or not proxy[key].strip():
-                raise SubscriptionError(f'第 {index} 个节点缺少有效的 {key} 字段。')
+                raise SubscriptionError(t(f'第 {index} 个节点缺少有效的 {key} 字段。', f'Node {index} is missing a valid {key} field.'))
         if proxy['name'] in names:
-            raise SubscriptionError(f'第 {index} 个节点与前面的节点重名，请修正订阅。')
+            raise SubscriptionError(t(f'第 {index} 个节点与前面的节点重名，请修正订阅。', f'Node {index} has the same name as an earlier node. Fix the subscription.'))
         names.add(proxy['name'])
         if proxy['type'] not in ('direct', 'reject'):
             if not isinstance(proxy.get('server'), str) or not proxy['server'].strip():
-                raise SubscriptionError(f'第 {index} 个节点缺少服务器地址。')
+                raise SubscriptionError(t(f'第 {index} 个节点缺少服务器地址。', f'Node {index} is missing a server address.'))
             if isinstance(proxy.get('port'), bool) or not isinstance(proxy.get('port'), int) or not 1 <= proxy['port'] <= 65535:
-                raise SubscriptionError(f'第 {index} 个节点端口不正确。')
+                raise SubscriptionError(t(f'第 {index} 个节点端口不正确。', f'Node {index} has an invalid port.'))
     return proxies
 
 # ---------------- 各类链接 -> Clash proxy ----------------
@@ -203,7 +208,7 @@ def parse_ss(line):
     dec = base64.b64decode(body + "=" * (-len(body) % 4)).decode("utf-8", "replace")
     m = re.match(r"([^:]+):([^@]+)@([^:]+):(\d+)", dec)
     if not m:
-        raise ValueError("无法解析 Shadowsocks 链接")
+        raise ValueError(t("无法解析 Shadowsocks 链接", "Could not parse the Shadowsocks link"))
     method, pwd, host, port = m.groups()
     return {"name": name, "type": "ss", "server": host,
             "port": int(port), "cipher": method, "password": pwd, "udp": True}
@@ -239,7 +244,7 @@ def decode_subscription(path):
     txt = raw.decode("utf-8-sig", "replace").strip()
     schemes = ("vless://", "trojan://", "vmess://", "ss://", "hysteria2://", "tuic://")
     if any(line.strip().startswith(schemes) for line in txt.splitlines()):
-        return [l.strip() for l in txt.splitlines() if l.strip()], "明文链接"
+        return [l.strip() for l in txt.splitlines() if l.strip()], t("明文链接", "Plain links")
     def decode(value):
         compact = re.sub(r"\s+", "", value)
         return base64.b64decode(compact + "=" * (-len(compact) % 4), altchars=b'-_', validate=True).decode('utf-8')
@@ -259,16 +264,16 @@ def decode_subscription(path):
             except Exception:
                 pass
         if any(s in "".join(outs) for s in schemes):
-            return outs, "逐行 base64"
+            return outs, t("逐行 base64", "Line-by-line base64")
     if not any(line.strip().startswith(schemes) for line in dec.splitlines()):
-        raise SubscriptionError('返回内容不是有效的 Clash 配置或节点链接订阅，请检查地址是否返回网页或错误信息。')
-    return [l.strip() for l in dec.splitlines() if l.strip()], "整块 base64"
+        raise SubscriptionError(t('返回内容不是有效的 Clash 配置或节点链接订阅，请检查地址是否返回网页或错误信息。', 'The response is not a valid Clash config or link subscription. Check whether the URL returns a web page or an error.'))
+    return [l.strip() for l in dec.splitlines() if l.strip()], t("整块 base64", "Base64 block")
 
 
 def parse_subscription(path):
     raw = Path(path).read_bytes()
     if not raw or len(raw) > 16 * 1024 * 1024:
-        raise SubscriptionError('订阅为空或超过 16 MB 限制。')
+        raise SubscriptionError(t('订阅为空或超过 16 MB 限制。', 'The subscription is empty or over the 16 MB limit.'))
     text = raw.decode('utf-8-sig', 'replace').strip()
     if text.startswith(('{', '[')) or re.search(r'''(?m)^["']?proxies["']?\s*:''', text):
         try:
@@ -278,7 +283,7 @@ def parse_subscription(path):
             data = load_yaml(text)
             form = 'Clash YAML'
         if not isinstance(data, dict):
-            raise SubscriptionError('Clash 订阅必须包含 proxies 节点列表。')
+            raise SubscriptionError(t('Clash 订阅必须包含 proxies 节点列表。', 'A Clash subscription must include a proxies list.'))
         # 只导入节点，保留用户已有的分流、DNS、端口和策略组配置。
         return validate_proxies(data.get('proxies')), form, []
     lines, form = decode_subscription(path)
@@ -289,12 +294,12 @@ def parse_subscription(path):
         scheme = line.split('://', 1)[0].lower() if '://' in line else ''
         parser = PARSERS.get(scheme)
         if parser is None:
-            failures.append(f'第 {index} 行：不支持的节点协议')
+            failures.append(t(f'第 {index} 行：不支持的节点协议', f'Line {index}: unsupported protocol'))
             continue
         try:
             proxies.append(parser(line))
         except Exception:
-            failures.append(f'第 {index} 行：节点链接格式不正确')
+            failures.append(t(f'第 {index} 行：节点链接格式不正确', f'Line {index}: malformed node link'))
     return validate_proxies(proxies), form, failures
 
 
@@ -352,13 +357,13 @@ def main():
     try:
         proxies, form, failed = parse_subscription(sub_path)
     except (SubscriptionError, OSError, RecursionError) as error:
-        detail = str(error) if isinstance(error, SubscriptionError) else '无法读取或解析订阅文件。'
+        detail = str(error) if isinstance(error, SubscriptionError) else t('无法读取或解析订阅文件。', 'Could not read or parse the subscription file.')
         print(f'✗ {detail}', file=sys.stderr)
         return 1
-    print(f"订阅形态: {form}")
-    print(f"✓ 解析成功 {len(proxies)} 个节点")
+    print(t(f"订阅形态: {form}", f"Subscription format: {form}"))
+    print(t(f"✓ 解析成功 {len(proxies)} 个节点", f"✓ Parsed {len(proxies)} nodes"))
     if failed:
-        print(f"解析失败 {len(failed)} 条:")
+        print(t(f"解析失败 {len(failed)} 条:", f"{len(failed)} failed to parse:"))
         for error in failed:
             print(f"  ! {error}")
 
@@ -386,7 +391,7 @@ def main():
     finally:
         if temporary and temporary.exists():
             temporary.unlink()
-    print(f"✓ 节点文件已生成（{len(proxies)} 节点）")
+    print(t(f"✓ 节点文件已生成（{len(proxies)} 节点）", f"✓ Node file written ({len(proxies)} nodes)"))
     return 0
 
 

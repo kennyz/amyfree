@@ -25,6 +25,8 @@ enum AppRuntime {
         // Never write bytecode back into the sealed, signed application bundle.
         result["PYTHONDONTWRITEBYTECODE"] = "1"
         result["PYTHONNOUSERSITE"] = "1"
+        // 运行脚本按此输出提示文字，与界面语言一致
+        result["AMYFREE_LANG"] = AppLanguage.current.rawValue
         result.removeValue(forKey: "PYTHONHOME")
         result.removeValue(forKey: "PYTHONPATH")
         return result
@@ -65,7 +67,7 @@ enum AppRuntime {
         if ready, (try? String(contentsOf: marker, encoding: .utf8)) == version { return false }
         for path in files.map({ resources.appendingPathComponent($0) }) + [binary] {
             guard manager.fileExists(atPath: path.path) else {
-                throw RuntimeInstallError(message: "安装包缺少运行组件，请重新下载 Amyfree。")
+                throw RuntimeInstallError(message: tr("安装包缺少运行组件，请重新下载 Amyfree。", "The package is missing runtime components. Please download Amyfree again."))
             }
         }
         try manager.createDirectory(at: destination.appendingPathComponent("providers"),
@@ -89,7 +91,7 @@ enum AppRuntime {
         if !manager.fileExists(atPath: secret.path) {
             var bytes = [UInt8](repeating: 0, count: 32)
             guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-                throw RuntimeInstallError(message: "无法生成本机密钥，请重新打开 Amyfree。")
+                throw RuntimeInstallError(message: tr("无法生成本机密钥，请重新打开 Amyfree。", "Could not generate the local API key. Please reopen Amyfree."))
             }
             try (bytes.map { String(format: "%02x", $0) }.joined() + "\n").write(to: secret, atomically: true, encoding: .utf8)
             try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: secret.path)

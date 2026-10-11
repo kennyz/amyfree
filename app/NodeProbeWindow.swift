@@ -31,16 +31,16 @@ final class NodeProbeWindowController: NSWindowController, NSTableViewDelegate, 
     private let table = NSTableView()
     private let status = probeLabel("", size: 12, color: .secondaryLabelColor)
     private let summary = probeLabel("", size: 13, weight: .medium)
-    private let check = NSButton(title: "立即检测全部", target: nil, action: nil)
-    private let download = NSButton(title: "测选中节点下载速度", target: nil, action: nil)
-    private let allDownload = NSButton(title: "全部下载测速", target: nil, action: nil)
+    private let check = NSButton(title: tr("立即检测全部", "Test All Now"), target: nil, action: nil)
+    private let download = NSButton(title: tr("测选中节点下载速度", "Test Selected Download Speed"), target: nil, action: nil)
+    private let allDownload = NSButton(title: tr("全部下载测速", "Test All Download Speeds"), target: nil, action: nil)
     private var selectedName: String?
 
     init(probes: NodeProbeCoordinator) {
         self.probes = probes
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 535),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Amyfree · 节点测速"; window.isReleasedWhenClosed = false
+        window.title = tr("Amyfree · 节点测速", "Amyfree · Node Speed Test"); window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 950, height: 550)
         super.init(window: window)
         build(); update(); window.center()
@@ -52,14 +52,14 @@ final class NodeProbeWindowController: NSWindowController, NSTableViewDelegate, 
         if let index = probes.rows.firstIndex(where: { $0.name == name }) { table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
     }
     private func build() {
-        let title = probeLabel("节点测速", size: 25, weight: .semibold)
-        let caption = probeLabel("每 30 秒检测延迟、可用性和证书有效期；下载速度可手工测试。", color: .secondaryLabelColor)
+        let title = probeLabel(tr("节点测速", "Node Speed Test"), size: 25, weight: .semibold)
+        let caption = probeLabel(tr("每 \(NodeProbeCoordinator.intervalMinutes) 分钟检测延迟、可用性和证书有效期；下载速度可手工测试。", "Latency, availability and certificate expiry are tested every \(NodeProbeCoordinator.intervalMinutes) min; download speed can be tested manually."), color: .secondaryLabelColor)
         table.dataSource = self; table.delegate = self; table.rowHeight = 46
         table.usesAlternatingRowBackgroundColors = true
         table.allowsMultipleSelection = false
-        for (id, title, width) in [("state", "状态", 105.0), ("node", "订阅节点 / 链路", 275.0),
-                                   ("delay", "响应延迟", 80.0), ("speed", "下载速度", 120.0),
-                                   ("certificate", "证书有效期", 180.0), ("time", "最近检测", 100.0)] {
+        for (id, title, width) in [("state", tr("状态", "Status"), 105.0), ("node", tr("订阅节点 / 链路", "Node / Chain"), 275.0),
+                                   ("delay", tr("响应延迟", "Latency"), 80.0), ("speed", tr("下载速度", "Download"), 120.0),
+                                   ("certificate", tr("证书有效期", "Certificate"), 180.0), ("time", tr("最近检测", "Last Tested"), 100.0)] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
             column.title = title; column.width = width; column.minWidth = width - 10
             table.addTableColumn(column)
@@ -72,8 +72,8 @@ final class NodeProbeWindowController: NSWindowController, NSTableViewDelegate, 
         allDownload.target = self; allDownload.action = #selector(downloadAll)
         for button in [check, download, allDownload] { button.bezelStyle = .rounded }
         let buttons = probeStack([check, download, allDownload], vertical: false, spacing: 10)
-        let legend = probeLabel("● 可用   ◷ 较慢   ✕ 检测失败   ? 未检测   ↻ 检测中", size: 12, color: .secondaryLabelColor)
-        let note = probeLabel("下载测速每节点使用 1 MB 样本，显示短时平均速度；测速不会改变当前节点或链路。", size: 12, color: .secondaryLabelColor)
+        let legend = probeLabel(tr("● 可用   ◷ 较慢   ✕ 检测失败   ? 未检测   ↻ 检测中", "● Available   ◷ Slow   ✕ Failed   ? Not tested   ↻ Testing"), size: 12, color: .secondaryLabelColor)
+        let note = probeLabel(tr("下载测速每节点使用 1 MB 样本，显示短时平均速度；测速不会改变当前节点或链路。", "Download tests use a 1 MB sample per node and show a short average; testing never changes the current node or chain."), size: 12, color: .secondaryLabelColor)
         let root = probeStack([title, caption, summary, scroll, legend, status, buttons, note], spacing: 12)
         let content = window!.contentView!; content.addSubview(root); root.translatesAutoresizingMaskIntoConstraints = false
         for view in root.arrangedSubviews { view.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
@@ -88,7 +88,7 @@ final class NodeProbeWindowController: NSWindowController, NSTableViewDelegate, 
         if let selected = selected { table.selectRowIndexes(IndexSet(integer: selected), byExtendingSelection: false) }
         let available = probes.rows.filter { [.good, .slow].contains($0.indicator) }.count
         let failures = probes.rows.filter { $0.indicator == .failed }.count
-        summary.stringValue = "\(probes.rows.count) 个节点 / 链路  ·  \(available) 个可用  ·  \(failures) 个检测失败"
+        summary.stringValue = tr("\(probes.rows.count) 个节点 / 链路  ·  \(available) 个可用  ·  \(failures) 个检测失败", "\(probes.rows.count) nodes / chains  ·  \(available) available  ·  \(failures) failed")
         status.stringValue = probes.message
         let idle = !probes.checking && !probes.downloading
         check.isEnabled = idle
@@ -120,11 +120,11 @@ final class NodeProbeWindowController: NSWindowController, NSTableViewDelegate, 
             label.lineBreakMode = .byTruncatingMiddle; label.toolTip = item.title; return label
         case "delay":
             let label = probeLabel(item.delayText, size: 12)
-            label.toolTip = "经节点预热连接后的测试站点响应延迟，不是下载速度或 ICMP ping。"
+            label.toolTip = tr("经节点预热连接后的测试站点响应延迟，不是下载速度或 ICMP ping。", "Test-site response time through the node after a warm-up connection; not download speed or ICMP ping.")
             return label
         case "speed":
             let label = probeLabel(item.speedText, size: 12)
-            if let date = item.downloadedAt { label.toolTip = "下载测速时间：\(Self.format(date))" }
+            if let date = item.downloadedAt { label.toolTip = tr("下载测速时间：", "Download tested at: ") + Self.format(date) }
             return label
         case "certificate":
             let icon = NSImageView(); icon.image = probeIcon(item.certificate.indicator)
@@ -148,25 +148,25 @@ final class NodeProbeWindowController: NSWindowController, NSTableViewDelegate, 
 final class ChainWindowController: NSWindowController {
     private let entry = NSPopUpButton()
     private let exit = NSPopUpButton()
-    private let enabled = NSButton(checkboxWithTitle: "启用链式代理", target: nil, action: nil)
-    private let status = probeLabel("正在读取节点…", size: 12, color: .secondaryLabelColor)
-    private let save = NSButton(title: "保存并应用", target: nil, action: nil)
+    private let enabled = NSButton(checkboxWithTitle: tr("启用链式代理", "Enable chain proxy"), target: nil, action: nil)
+    private let status = probeLabel(tr("正在读取节点…", "Reading nodes…"), size: 12, color: .secondaryLabelColor)
+    private let save = NSButton(title: tr("保存并应用", "Save & Apply"), target: nil, action: nil)
     var onSaved: (() -> Void)?
     init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 610, height: 390),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-        window.title = "Amyfree · 链式代理"; window.isReleasedWhenClosed = false
+        window.title = tr("Amyfree · 链式代理", "Amyfree · Chain Proxy"); window.isReleasedWhenClosed = false
         super.init(window: window)
         save.target = self; save.action = #selector(apply); save.bezelStyle = .rounded; save.isEnabled = false
         save.keyEquivalent = "\r"
-        let root = probeStack([probeLabel("链式代理", size: 25, weight: .semibold),
-                               probeLabel("流量先经过入口，再由出口连接目标网站。", color: .secondaryLabelColor),
+        let root = probeStack([probeLabel(tr("链式代理", "Chain Proxy"), size: 25, weight: .semibold),
+                               probeLabel(tr("流量先经过入口，再由出口连接目标网站。", "Traffic goes through the entry node first, then the exit node connects to the site."), color: .secondaryLabelColor),
                                enabled,
-                               probeStack([probeLabel("入口节点", size: 12, color: .secondaryLabelColor), entry], spacing: 5),
+                               probeStack([probeLabel(tr("入口节点", "Entry node"), size: 12, color: .secondaryLabelColor), entry], spacing: 5),
                                probeLabel("↓", size: 18, color: .systemBlue),
-                               probeStack([probeLabel("出口节点", size: 12, color: .secondaryLabelColor), exit], spacing: 5),
+                               probeStack([probeLabel(tr("出口节点", "Exit node"), size: 12, color: .secondaryLabelColor), exit], spacing: 5),
                                status, save,
-                               probeLabel("只影响走代理的流量，直连和拦截规则保留；开启后可在节点测速中检测整条链路。", size: 12, color: .secondaryLabelColor)], spacing: 10)
+                               probeLabel(tr("只影响走代理的流量，直连和拦截规则保留；开启后可在节点测速中检测整条链路。", "Only affects proxied traffic; direct and block rules still apply. Once on, the whole chain can be tested in Node Speed Test."), size: 12, color: .secondaryLabelColor)], spacing: 10)
         let content = window.contentView!; content.addSubview(root); root.translatesAutoresizingMaskIntoConstraints = false
         for view in root.arrangedSubviews { view.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
         NSLayoutConstraint.activate([root.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
@@ -182,7 +182,7 @@ final class ChainWindowController: NSWindowController {
             let data = result.out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             DispatchQueue.main.async {
                 guard result.status == 0, let object = data, let names = object["names"] as? [String] else {
-                    self.status.stringValue = data?["error"] as? String ?? "无法读取节点，请先添加订阅。"; return
+                    self.status.stringValue = data?["error"] as? String ?? tr("无法读取节点，请先添加订阅。", "Could not read nodes. Add a subscription first."); return
                 }
                 self.entry.addItems(withTitles: names); self.exit.addItems(withTitles: names)
                 if let name = object["entry"] as? String, names.contains(name) { self.entry.selectItem(withTitle: name) }
@@ -190,25 +190,25 @@ final class ChainWindowController: NSWindowController {
                 else if names.count > 1 { self.exit.selectItem(at: 1) }
                 self.enabled.state = object["enabled"] as? Bool == true ? .on : .off
                 self.save.isEnabled = names.count > 1
-                self.status.stringValue = names.count < 2 ? "至少需要两个代理节点。" : self.enabled.state == .on ? "链式代理已开启。" : "链式代理未开启。选择入口和出口后保存。"
+                self.status.stringValue = names.count < 2 ? tr("至少需要两个代理节点。", "At least two proxy nodes are needed.") : self.enabled.state == .on ? tr("链式代理已开启。", "Chain proxy is on.") : tr("链式代理未开启。选择入口和出口后保存。", "Chain proxy is off. Choose an entry and exit node, then save.")
             }
         }
     }
     @objc private func apply() {
         guard let first = entry.titleOfSelectedItem, let last = exit.titleOfSelectedItem else { return }
-        if enabled.state == .on && first == last { status.stringValue = "入口和出口请选择不同的节点。"; status.textColor = .systemRed; return }
+        if enabled.state == .on && first == last { status.stringValue = tr("入口和出口请选择不同的节点。", "Choose different entry and exit nodes."); status.textColor = .systemRed; return }
         let action = enabled.state == .on ? "enable" : "disable"
         [save, entry, exit, enabled].forEach { $0.isEnabled = false }
-        status.stringValue = "正在校验并应用链式设置…"; status.textColor = .secondaryLabelColor
+        status.stringValue = tr("正在校验并应用链式设置…", "Checking and applying chain settings…"); status.textColor = .secondaryLabelColor
         DispatchQueue.global(qos: .userInitiated).async {
             let result = run(AppRuntime.python, ["\(CFG_DIR)/chain_proxy.py", action, "--home", CFG_DIR, "--entry", first, "--exit", last], timeout: 90)
             let data = result.out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             DispatchQueue.main.async {
                 [self.save, self.entry, self.exit, self.enabled].forEach { $0.isEnabled = true }
                 if result.status == 0 {
-                    self.status.stringValue = data?["applied"] as? Bool == true ? "已保存并应用。新连接使用更新后的链路。" : "已保存，下次启动代理时生效。"
+                    self.status.stringValue = data?["applied"] as? Bool == true ? tr("已保存并应用。新连接使用更新后的链路。", "Saved and applied. New connections use the updated chain.") : tr("已保存，下次启动代理时生效。", "Saved. Takes effect next time the proxy starts.")
                     self.status.textColor = .systemGreen; self.onSaved?()
-                } else { self.status.stringValue = data?["error"] as? String ?? "链式设置失败，请检查配置。"; self.status.textColor = .systemRed }
+                } else { self.status.stringValue = data?["error"] as? String ?? tr("链式设置失败，请检查配置。", "Chain settings failed. Check the configuration."); self.status.textColor = .systemRed }
             }
         }
     }

@@ -26,6 +26,8 @@ SOCKS_PORT="7890"
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 grn() { printf '\033[32m%s\033[0m\n' "$*"; }
 ylw() { printf '\033[33m%s\033[0m\n' "$*"; }
+# 提示语言：AMYFREE_LANG=en 输出英文，默认中文（菜单栏 App 按界面语言传入）
+t() { if [ "${AMYFREE_LANG:-zh}" = "en" ]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 
 # 找到「有 IPv4 地址且处于活跃状态」的网络服务（即真正的出口网卡）
 active_services() {
@@ -72,7 +74,7 @@ set_one() {
 case "${1:-status}" in
   on)
     svcs="$(active_services)"
-    if [ -z "$svcs" ]; then red "✗ 未找到活跃网络服务"; exit 1; fi
+    if [ -z "$svcs" ]; then red "$(t '✗ 未找到活跃网络服务' '✗ No active network service found')"; exit 1; fi
     : > "$STATE"
     while IFS= read -r svc; do
       [ -z "$svc" ] && continue
@@ -80,13 +82,13 @@ case "${1:-status}" in
       echo "$svc" >> "$STATE"
       echo "  → $svc"
     done <<< "$svcs"
-    grn "✓ 系统代理已开启（指向 ${PROXY_HOST}:${PROXY_PORT}）"
+    grn "$(t "✓ 系统代理已开启（指向 ${PROXY_HOST}:${PROXY_PORT}）" "✓ System proxy on (pointing to ${PROXY_HOST}:${PROXY_PORT})")"
     # 回读校验，避免"设了但没生效"
     sleep 1
     if networksetup -getwebproxy "$(head -1 "$STATE")" 2>/dev/null | grep -q "Enabled: Yes"; then
-      grn "✓ 回读校验通过"
+      grn "$(t '✓ 回读校验通过' '✓ Read-back check passed')"
     else
-      red "✗ 回读校验失败——设置未生效"
+      red "$(t '✗ 回读校验失败——设置未生效' '✗ Read-back check failed: the setting did not take effect')"
       exit 1
     fi
     ;;
@@ -105,7 +107,7 @@ case "${1:-status}" in
         set_one "$svc" off
       done <<< "$(networksetup -listallnetworkservices 2>/dev/null | tail -n +2 | sed 's/^\*//')"
     fi
-    grn "✓ 系统代理已关闭"
+    grn "$(t '✓ 系统代理已关闭' '✓ System proxy off')"
     ;;
   status)
     local_any=0
@@ -113,15 +115,15 @@ case "${1:-status}" in
       [ -z "$svc" ] && continue
       wh="$(networksetup -getwebproxy "$svc" 2>/dev/null | head -1)"
       case "$wh" in
-        *"Enabled: Yes"*) echo "  $svc: 开"; local_any=1 ;;
-        *) echo "  $svc: 关" ;;
+        *"Enabled: Yes"*) echo "  ${svc}: $(t '开' 'on')"; local_any=1 ;;
+        *) echo "  ${svc}: $(t '关' 'off')" ;;
       esac
     done <<< "$(networksetup -listallnetworkservices 2>/dev/null | tail -n +2 | sed 's/^\*//')"
-    [ "$local_any" = "1" ] && grn "→ 系统代理处于开启状态" || ylw "→ 系统代理全部关闭"
+    [ "$local_any" = "1" ] && grn "$(t '→ 系统代理处于开启状态' '→ System proxy is on')" || ylw "$(t '→ 系统代理全部关闭' '→ System proxy is off everywhere')"
     ;;
   refresh)
     # 网络切换后重新应用到当前活跃服务
-    [ -f "$STATE" ] || { ylw "• 系统代理未开启，无需刷新"; exit 0; }
+    [ -f "$STATE" ] || { ylw "$(t '• 系统代理未开启，无需刷新' '• System proxy is off; nothing to refresh')"; exit 0; }
     "$0" off >/dev/null; "$0" on
     ;;
   *)

@@ -15,7 +15,7 @@ import urllib.request
 import urllib.parse
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
-from parse_sub import parse_subscription, to_yaml
+from parse_sub import parse_subscription, t, to_yaml
 from chain_proxy import read_state, chain_nodes, EXIT
 from cert_probe import certificate_batch
 
@@ -51,7 +51,7 @@ def catalogue(directory):
     labels = {}
     if state.get('enabled'):
         names.append(EXIT)
-        labels[EXIT] = '链式代理 · ' + state['entry'] + ' → ' + state['exit']
+        labels[EXIT] = t('链式代理 · ', 'Chain proxy · ') + state['entry'] + ' → ' + state['exit']
     return {'fingerprint': fingerprint(directory), 'names': names, 'labels': labels, 'chain': state}
 
 
@@ -81,11 +81,11 @@ def latency_session(directory):
                 process = subprocess.Popen([str(directory / 'mihomo'), '-d', str(work), '-f', str(path)],
                                            stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             for _ in range(40):
-                if process.poll() is not None: raise ValueError('检测会话无法启动')
+                if process.poll() is not None: raise ValueError(t('检测会话无法启动', 'Could not start the test session'))
                 try:
                     with socket.create_connection(('127.0.0.1', port), timeout=.1): break
                 except OSError: time.sleep(.05)
-            else: raise ValueError('检测会话启动超时')
+            else: raise ValueError(t('检测会话启动超时', 'The test session timed out while starting'))
             yield f'127.0.0.1:{port}', secret
         finally:
             if process is not None and process.poll() is None:
@@ -116,12 +116,12 @@ def check_latencies(result, api, secret, isolated):
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
             with opener.open(req, timeout=8) as response: value = json.load(response)
             delay = value.get('delay', 0)
-            return {'name': name, 'delay': delay, 'error': '' if delay > 0 else '检测未通过'}
+            return {'name': name, 'delay': delay, 'error': '' if delay > 0 else t('检测未通过', 'Test failed')}
         except urllib.error.HTTPError as error:
-            return {'name': name, 'delay': 0, 'error': '节点更新中' if error.code in (401, 404) else '超时或连接失败',
+            return {'name': name, 'delay': 0, 'error': t('节点更新中', 'Node updating') if error.code in (401, 404) else t('超时或连接失败', 'Timed out or connection failed'),
                     'service_error': error.code in (401, 404)}
         except Exception:
-            return {'name': name, 'delay': 0, 'error': '内核连接中断', 'service_error': True}
+            return {'name': name, 'delay': 0, 'error': t('内核连接中断', 'Lost connection to the core'), 'service_error': True}
     with ThreadPoolExecutor(max_workers=3) as pool:
         result['results'] = list(pool.map(check, result['names']))
     return result
@@ -129,7 +129,7 @@ def check_latencies(result, api, secret, isolated):
 
 def speed_from_sample(status, received, seconds):
     if status != 200 or received != SAMPLE_BYTES or seconds <= 0:
-        raise ValueError('下载样本未完成')
+        raise ValueError(t('下载样本未完成', 'Download sample incomplete'))
     return received / seconds / 1_000_000
 
 
@@ -138,11 +138,11 @@ def measure(directory, name):
     proxies, _, _ = parse_subscription(directory / 'providers/nodes.yaml')
     if name == EXIT:
         state = read_state(directory)
-        if not state.get('enabled'): raise ValueError('链式代理未开启')
+        if not state.get('enabled'): raise ValueError(t('链式代理未开启', 'Chain proxy is off'))
         proxies += chain_nodes(proxies, state['entry'], state['exit'])
     node = next((proxy for proxy in proxies if proxy['name'] == name), None)
     if node is None:
-        raise ValueError('订阅节点已变化，请重新检测')
+        raise ValueError(t('订阅节点已变化，请重新检测', 'Subscription nodes changed. Test again.'))
     with socket.socket() as reservation:
         reservation.bind(('127.0.0.1', 0))
         port = reservation.getsockname()[1]
@@ -174,14 +174,14 @@ def measure(directory, name):
                 except OSError:
                     time.sleep(.05)
             if not ready:
-                raise ValueError('无法启动隔离测速会话')
+                raise ValueError(t('无法启动隔离测速会话', 'Could not start an isolated speed-test session'))
             result = subprocess.run(['curl', '-sS', '--proxy', f'http://127.0.0.1:{port}',
                                      '--noproxy', '', '--connect-timeout', '6', '--max-time', '12',
                                      '-H', 'Accept-Encoding: identity', '-o', os.devnull,
                                      '-w', '%{http_code} %{size_download} %{time_total}', DOWNLOAD_URL],
                                     capture_output=True, text=True, timeout=14)
             if result.returncode:
-                raise ValueError('下载测速超时或连接失败')
+                raise ValueError(t('下载测速超时或连接失败', 'Download test timed out or the connection failed'))
             status, received, seconds = result.stdout.split()
             speed = speed_from_sample(int(status), int(float(received)), float(seconds))
             return {'ok': True, 'megabytes_per_second': speed, 'bytes': SAMPLE_BYTES,
@@ -214,11 +214,11 @@ def main():
         elif args.node:
             result = measure(args.home, args.node)
         else:
-            raise ValueError('请选择一个节点')
+            raise ValueError(t('请选择一个节点', 'Choose a node'))
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as error:
-        message = str(error) if isinstance(error, ValueError) else '无法读取节点或执行测速'
+        message = str(error) if isinstance(error, ValueError) else t('无法读取节点或执行测速', 'Could not read nodes or run the test')
         print(json.dumps({'ok': False, 'error': message}, ensure_ascii=False))
         return 1
 

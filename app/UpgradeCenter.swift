@@ -22,21 +22,21 @@ final class UpgradeCoordinator {
         self.applicationCheck = applicationCheck; self.geodataCheck = geodataCheck
         for component in UpgradeComponent.allCases {
             rows[component]?.available = defaults.bool(forKey: "AmyfreeUpgrade.available.\(component.rawValue)")
-            if rows[component]?.available == true { rows[component]?.message = "发现可用更新" }
-            else if lastCheck != nil { rows[component]?.message = "上次检查已是最新版本" }
+            if rows[component]?.available == true { rows[component]?.message = tr("发现可用更新", "Update available") }
+            else if lastCheck != nil { rows[component]?.message = tr("上次检查已是最新版本", "Up to date as of last check") }
         }
         if let tag = defaults.string(forKey: "AmyfreeUpgrade.availableTag"),
            let remote = AppVersion(tag), let current = AppVersion(AppUpdater.currentVersion), remote <= current {
             setAvailable(false, for: .application)
-            rows[.application]?.message = "当前版本已更新"
+            rows[.application]?.message = tr("当前版本已更新", "This version is up to date")
         }
     }
     private func changed() { onChange?() }
     func preview(progress: Bool, application: Bool = false, knownTotal: Bool = true) {
-        rows[.application] = UpgradeRowState(available: true, working: progress && application, message: "有新版本可升级", progress: progress && application ? UpgradeProgress(received: 20_000_000, total: 57_000_000, phase: "正在下载…") : nil)
-        rows[.geoip] = UpgradeRowState(available: progress && !application, working: progress && !application, message: "已是最新版本", progress: progress && !application ? UpgradeProgress(received: 5_800_000, total: 16_500_000, phase: "正在下载…") : nil)
-        rows[.geosite] = UpgradeRowState(available: true, message: "发现新版规则库")
-        rows[.mmdb] = UpgradeRowState(message: "已是最新版本")
+        rows[.application] = UpgradeRowState(available: true, working: progress && application, message: tr("有新版本可升级", "A new version is available"), progress: progress && application ? UpgradeProgress(received: 20_000_000, total: 57_000_000, phase: tr("正在下载…", "Downloading…")) : nil)
+        rows[.geoip] = UpgradeRowState(available: progress && !application, working: progress && !application, message: tr("已是最新版本", "Up to date"), progress: progress && !application ? UpgradeProgress(received: 5_800_000, total: 16_500_000, phase: tr("正在下载…", "Downloading…")) : nil)
+        rows[.geosite] = UpgradeRowState(available: true, message: tr("发现新版规则库", "New rule data available"))
+        rows[.mmdb] = UpgradeRowState(message: tr("已是最新版本", "Up to date"))
         active = progress ? (application ? .application : .geoip) : nil
         if !knownTotal, let active = active { rows[active]?.progress?.total = 0 }
     }
@@ -52,7 +52,7 @@ final class UpgradeCoordinator {
         guard !checking && active == nil else { return }
         checking = true
         defaults.set(Date(), forKey: "AmyfreeUpgrade.lastAttempt")
-        for component in UpgradeComponent.allCases { rows[component]?.checking = true; rows[component]?.message = "正在检查…" }
+        for component in UpgradeComponent.allCases { rows[component]?.checking = true; rows[component]?.message = tr("正在检查…", "Checking…") }
         changed()
         DispatchQueue.global(qos: .utility).async {
             let appResult = Result { try self.applicationCheck() }
@@ -65,17 +65,17 @@ final class UpgradeCoordinator {
                     self.release = update
                     self.setAvailable(update != nil, for: .application)
                     self.defaults.set(update?.tag, forKey: "AmyfreeUpgrade.availableTag")
-                    self.rows[.application]?.message = update.map { "新版本 \($0.version) 可升级" } ?? "已是最新版本"
+                    self.rows[.application]?.message = update.map { tr("新版本 \($0.version) 可升级", "Version \($0.version) is available") } ?? tr("已是最新版本", "Up to date")
                 case .failure(let error): self.rows[.application]?.message = error.localizedDescription
                 }
                 switch geoResult {
                 case .success(let files):
                     for component in UpgradeComponent.allCases where component.file != nil {
                         guard let item = files[component.file!] as? [String: Any], let available = item["available"] as? Bool else {
-                            self.rows[component]?.message = "无法读取检查结果，请重试。"; continue
+                            self.rows[component]?.message = tr("无法读取检查结果，请重试。", "Could not read the check result. Please try again."); continue
                         }
                         self.setAvailable(available, for: component)
-                        self.rows[component]?.message = available ? "发现新版规则库" : "已是最新版本"
+                        self.rows[component]?.message = available ? tr("发现新版规则库", "New rule data available") : tr("已是最新版本", "Up to date")
                     }
                 case .failure(let error):
                     for component in UpgradeComponent.allCases where component.file != nil { self.rows[component]?.message = error.localizedDescription }
@@ -87,11 +87,11 @@ final class UpgradeCoordinator {
     }
     private func checkGeodata() throws -> [String: Any] {
         let helper = "\(directory)/geodata_update.py"
-        guard FileManager.default.fileExists(atPath: helper) else { throw AppUpdateError(message: "运行组件尚未准备好，请重新安装应用。") }
+        guard FileManager.default.fileExists(atPath: helper) else { throw AppUpdateError(message: tr("运行组件尚未准备好，请重新安装应用。", "Runtime components aren't ready. Please reinstall the app.")) }
         let result = try UpgradeProcess.run(AppRuntime.python, [helper, "--home", directory, "--check", "--json"], timeout: 700)
         let objects = Self.events(result.text)
         guard result.status == 0, let files = objects.last(where: { $0["event"] as? String == "checked" })?["files"] as? [String: Any] else {
-            let detail = objects.last?["message"] as? String ?? "规则库检查失败，请检查网络后重试。"
+            let detail = objects.last?["message"] as? String ?? tr("规则库检查失败，请检查网络后重试。", "Rule data check failed. Check your network and try again.")
             throw AppUpdateError(message: detail)
         }
         return files
@@ -106,15 +106,15 @@ final class UpgradeCoordinator {
         guard active == nil && !checking else { return }
         if component == .application && release == nil { check(); return }
         active = component; rows[component]?.working = true
-        rows[component]?.progress = UpgradeProgress(); rows[component]?.message = "准备下载…"; changed()
+        rows[component]?.progress = UpgradeProgress(); rows[component]?.message = tr("准备下载…", "Preparing download…"); changed()
         DispatchQueue.global(qos: .utility).async {
             do {
                 if component == .application {
-                    guard let release = self.release else { throw AppUpdateError(message: "请先检查新版。") }
+                    guard let release = self.release else { throw AppUpdateError(message: tr("请先检查新版。", "Check for updates first.")) }
                     let staged = try AppUpdater.stage(release) { progress in self.report(progress, for: component) }
                     DispatchQueue.main.async {
                         do {
-                            guard let install = self.onApplicationReady else { throw AppUpdateError(message: "无法启动安装助手，请重试。") }
+                            guard let install = self.onApplicationReady else { throw AppUpdateError(message: tr("无法启动安装助手，请重试。", "Could not start the installer. Please try again.")) }
                             try install(staged)
                         } catch {
                             try? FileManager.default.removeItem(at: staged)
@@ -128,17 +128,17 @@ final class UpgradeCoordinator {
                         let events = Self.events(output.components(separatedBy: "\n").dropLast().joined(separator: "\n"))
                         for event in events.dropFirst(consumed) where event["event"] as? String == "progress" {
                             let phase = event["phase"] as? String ?? ""
-                            let caption = phase == "validating" ? "正在校验规则格式…" : phase == "installing" ? "正在保存…" : "正在下载…"
+                            let caption = phase == "validating" ? tr("正在校验规则格式…", "Validating rule format…") : phase == "installing" ? tr("正在保存…", "Saving…") : tr("正在下载…", "Downloading…")
                             self.report(UpgradeProgress(received: (event["downloaded"] as? NSNumber)?.int64Value ?? 0,
                                                         total: (event["total"] as? NSNumber)?.int64Value ?? 0, phase: caption), for: component)
                         }
                         consumed = events.count
                     })
                     let events = Self.events(result.text)
-                    guard result.status == 0 else { throw AppUpdateError(message: events.last?["message"] as? String ?? "更新失败，旧规则库已保留。") }
+                    guard result.status == 0 else { throw AppUpdateError(message: events.last?["message"] as? String ?? tr("更新失败，旧规则库已保留。", "Update failed; the previous rule data was kept.")) }
                     DispatchQueue.main.async {
                         self.setAvailable(false, for: component)
-                        self.finish(component, message: "已更新 · 重新启用代理后生效")
+                        self.finish(component, message: tr("已更新 · 重新启用代理后生效", "Updated · takes effect after restarting the proxy"))
                     }
                 }
             } catch { DispatchQueue.main.async { self.finish(component, error: error) } }
@@ -178,10 +178,10 @@ private final class UpgradeRowView: NSView {
     let dot = NSTextField(labelWithString: "●")
     let title = NSTextField(labelWithString: "")
     let detail = NSTextField(labelWithString: "")
-    let state = NSTextField(wrappingLabelWithString: "尚未检查")
+    let state = NSTextField(wrappingLabelWithString: tr("尚未检查", "Not checked yet"))
     let bar = UpgradeDownloadBar()
     private var progressDisplay = UpgradeProgressDisplay.hidden
-    let button = NSButton(title: "检查更新", target: nil, action: nil)
+    let button = NSButton(title: tr("检查更新", "Check for Updates"), target: nil, action: nil)
     init(_ component: UpgradeComponent) {
         self.component = component
         super.init(frame: .zero)
@@ -191,7 +191,7 @@ private final class UpgradeRowView: NSView {
         detail.stringValue = component.detail; detail.font = .systemFont(ofSize: 12); detail.textColor = .secondaryLabelColor
         state.font = .systemFont(ofSize: 12); state.maximumNumberOfLines = 2; state.textColor = .secondaryLabelColor
         dot.textColor = .systemRed; dot.font = .systemFont(ofSize: 9); dot.isHidden = true
-        dot.setAccessibilityLabel("有可用更新")
+        dot.setAccessibilityLabel(tr("有可用更新", "Update available"))
         bar.isHidden = true
         button.bezelStyle = .rounded
         for view in [dot, title, detail, state, bar, button] { addSubview(view); view.translatesAutoresizingMaskIntoConstraints = false }
@@ -222,21 +222,21 @@ private final class UpgradeRowView: NSView {
 final class UpgradeCenterWindowController: NSWindowController {
     let coordinator: UpgradeCoordinator
     private let last = NSTextField(labelWithString: "")
-    private let check = NSButton(title: "检查更新", target: nil, action: nil)
+    private let check = NSButton(title: tr("检查更新", "Check for Updates"), target: nil, action: nil)
     private var rowViews: [UpgradeComponent: UpgradeRowView] = [:]
     init(coordinator: UpgradeCoordinator) {
         self.coordinator = coordinator
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 650),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-        window.title = "Amyfree · 升级中心"; window.isReleasedWhenClosed = false
+        window.title = tr("Amyfree · 升级中心", "Amyfree · Upgrade Center"); window.isReleasedWhenClosed = false
         super.init(window: window)
         build(); update(); window.center()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     func present() { update(); showWindow(nil); window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     private func build() {
-        let title = NSTextField(labelWithString: "升级中心"); title.font = .systemFont(ofSize: 26, weight: .semibold)
-        let subtitle = NSTextField(labelWithString: "应用与规则库分别升级，订阅和设置始终保留。")
+        let title = NSTextField(labelWithString: tr("升级中心", "Upgrade Center")); title.font = .systemFont(ofSize: 26, weight: .semibold)
+        let subtitle = NSTextField(labelWithString: tr("应用与规则库分别升级，订阅和设置始终保留。", "The app and rule data upgrade separately; subscriptions and settings are always kept."))
         subtitle.textColor = .secondaryLabelColor; subtitle.font = .systemFont(ofSize: 13)
         last.font = .systemFont(ofSize: 11); last.textColor = .secondaryLabelColor
         check.bezelStyle = .rounded; check.target = self; check.action = #selector(checkNow)
@@ -247,7 +247,7 @@ final class UpgradeCenterWindowController: NSWindowController {
             row.button.target = self; row.button.action = #selector(upgrade(_:)); row.button.tag = UpgradeComponent.allCases.firstIndex(of: component)!
             contents.append(row)
         }
-        let note = NSTextField(labelWithString: "每 24 小时自动检查 · 红点表示有可用更新")
+        let note = NSTextField(labelWithString: tr("每 24 小时自动检查 · 红点表示有可用更新", "Checks automatically every 24 hours · a red dot means an update is available"))
         note.font = .systemFont(ofSize: 11); note.textColor = .secondaryLabelColor; contents.append(note)
         let root = NSStackView(views: contents); root.orientation = .vertical; root.alignment = .leading; root.spacing = 10
         let content = window!.contentView!; content.addSubview(root); root.translatesAutoresizingMaskIntoConstraints = false
@@ -256,21 +256,21 @@ final class UpgradeCenterWindowController: NSWindowController {
     }
     func update() {
         let formatter = DateFormatter(); formatter.dateStyle = .short; formatter.timeStyle = .short
-        last.stringValue = coordinator.lastCheck.map { "上次检查：\(formatter.string(from: $0))" } ?? "尚未完成检查"
+        last.stringValue = coordinator.lastCheck.map { tr("上次检查：", "Last checked: ") + formatter.string(from: $0) } ?? tr("尚未完成检查", "No check completed yet")
         check.isEnabled = !coordinator.checking && coordinator.active == nil
-        check.title = coordinator.checking ? "正在检查…" : "检查更新"
+        check.title = coordinator.checking ? tr("正在检查…", "Checking…") : tr("检查更新", "Check for Updates")
         for component in UpgradeComponent.allCases {
             let row = rowViews[component]!, state = coordinator.rows[component]!
             row.dot.isHidden = !state.available
             let local: String
             if let file = component.file {
                 let attributes = try? FileManager.default.attributesOfItem(atPath: "\(coordinator.directory)/\(file)")
-                local = (attributes?[.modificationDate] as? Date).map { "本地更新：\(formatter.string(from: $0))" } ?? "尚未安装"
-            } else { local = "当前版本 \(AppUpdater.currentVersion)" }
+                local = (attributes?[.modificationDate] as? Date).map { tr("本地更新：", "Local update: ") + formatter.string(from: $0) } ?? tr("尚未安装", "Not installed")
+            } else { local = tr("当前版本 ", "Current version ") + AppUpdater.currentVersion }
             row.detail.stringValue = local
             row.state.stringValue = state.progress?.text ?? state.message
             row.updateProgress(UpgradeProgressDisplay(state: state, isActive: coordinator.active == component))
-            row.button.title = state.working ? "正在升级…" : component == .application ? (state.available ? "升级并重启" : "检查更新") : (state.available ? "升级规则库" : "重新下载")
+            row.button.title = state.working ? tr("正在升级…", "Upgrading…") : component == .application ? (state.available ? tr("升级并重启", "Upgrade & Restart") : tr("检查更新", "Check for Updates")) : (state.available ? tr("升级规则库", "Upgrade Rule Data") : tr("重新下载", "Download Again"))
             row.button.isEnabled = coordinator.active == nil && !coordinator.checking
             row.button.setAccessibilityLabel("\(component.title) · \(row.button.title)")
         }
@@ -279,9 +279,9 @@ final class UpgradeCenterWindowController: NSWindowController {
     @objc private func upgrade(_ sender: NSButton) {
         let component = UpgradeComponent.allCases[sender.tag]
         if component == .application, let release = coordinator.release {
-            let alert = NSAlert(); alert.messageText = "升级至 Amyfree \(release.version)？"
-            alert.informativeText = "下载并校验后会重新打开应用，订阅和设置将保留。"
-            alert.addButton(withTitle: "升级并重启"); alert.addButton(withTitle: "取消")
+            let alert = NSAlert(); alert.messageText = tr("升级至 Amyfree \(release.version)？", "Upgrade to Amyfree \(release.version)?")
+            alert.informativeText = tr("下载并校验后会重新打开应用，订阅和设置将保留。", "Amyfree will reopen after downloading and verifying; subscriptions and settings are kept.")
+            alert.addButton(withTitle: tr("升级并重启", "Upgrade & Restart")); alert.addButton(withTitle: tr("取消", "Cancel"))
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
         coordinator.start(component)

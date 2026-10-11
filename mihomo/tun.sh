@@ -15,11 +15,24 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CFG="$DIR/config.yaml"
 BAK="$DIR/.config.yaml.notun"
 PIDFILE="$DIR/.mihomo.pid"
+# 提示语言：AMYFREE_LANG=en 输出英文，默认中文（菜单栏 App 按界面语言传入）
+t() { if [ "${AMYFREE_LANG:-zh}" = "en" ]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 
 if [ "$(id -u)" != "0" ]; then
-  echo "✗ 需要 root 权限：sudo $0 $*" >&2
+  echo "$(t '✗ 需要 root 权限：' '✗ Root privileges required: ')sudo $0 $*" >&2
   exit 1
 fi
+
+# 内核需以 root 运行才能建立 TUN，但运行文件要留给目录所有者：
+# App 以普通用户身份保存链式代理、分流和订阅时需要读写这些文件。
+OWNER="$(stat -f %Su "$DIR")"
+give_back() {
+  local f
+  for f in .run-config.yaml .mihomo.pid .config.yaml.notun config.yaml mihomo.log cache.db; do
+    [ -e "$DIR/$f" ] && chown "$OWNER" "$DIR/$f"
+  done
+  return 0
+}
 
 tun_block() {
   cat <<'EOF'
@@ -40,39 +53,41 @@ EOF
 case "${1:-status}" in
   on)
     if grep -qE '^tun:' "$CFG"; then
-      echo "• TUN 已处于开启状态，无需重复操作"; exit 0
+      echo "$(t '• TUN 已处于开启状态，无需重复操作' '• TUN is already on')"; exit 0
     fi
     [ -f "$BAK" ] || cp "$CFG" "$BAK"
     tun_block >> "$CFG"
-    echo "✓ 已写入 TUN 配置"
+    echo "$(t '✓ 已写入 TUN 配置' '✓ TUN config written')"
     # 重启服务
-    sudo -u "${SUDO_USER:-root}" "$DIR/mihomoctl.sh" restart 2>/dev/null || true
+    sudo -u "${SUDO_USER:-root}" env AMYFREE_LANG="${AMYFREE_LANG:-zh}" "$DIR/mihomoctl.sh" restart 2>/dev/null || true
+    give_back
     sleep 2
     if ifconfig 2>/dev/null | grep -q "utun199"; then
-      echo "✓ TUN 接口 utun199 已建立，全部流量正在走代理"
+      echo "$(t '✓ TUN 接口 utun199 已建立，全部流量正在走代理' '✓ TUN interface utun199 is up; all traffic goes through the proxy')"
     else
-      echo "! utun199 未出现，检查日志: $DIR/mihomo.log"
+      echo "$(t '! utun199 未出现，检查日志' '! utun199 did not appear; check the log'): $DIR/mihomo.log"
     fi
     ;;
   off)
     if [ -f "$BAK" ]; then
       cp "$BAK" "$CFG"; rm -f "$BAK"
-      echo "✓ 已还原为无 TUN 配置"
+      echo "$(t '✓ 已还原为无 TUN 配置' '✓ Restored the non-TUN config')"
     else
-      echo "• 无备份可还原（可能本就未开启）"
+      echo "$(t '• 无备份可还原（可能本就未开启）' '• No backup to restore (TUN was probably off)')"
     fi
-    sudo -u "${SUDO_USER:-root}" "$DIR/mihomoctl.sh" restart 2>/dev/null || true
+    sudo -u "${SUDO_USER:-root}" env AMYFREE_LANG="${AMYFREE_LANG:-zh}" "$DIR/mihomoctl.sh" restart 2>/dev/null || true
+    give_back
     ;;
   status)
     if grep -qE '^tun:' "$CFG" 2>/dev/null; then
-      echo "配置: TUN 已开启"
+      echo "$(t '配置: TUN 已开启' 'Config: TUN on')"
     else
-      echo "配置: TUN 未开启（当前为 7890 端口代理模式）"
+      echo "$(t '配置: TUN 未开启（当前为 7890 端口代理模式）' 'Config: TUN off (port 7890 proxy mode)')"
     fi
     if ifconfig 2>/dev/null | grep -q utun199; then
-      echo "接口: utun199 存在"
+      echo "$(t '接口: utun199 存在' 'Interface: utun199 present')"
     else
-      echo "接口: utun199 不存在"
+      echo "$(t '接口: utun199 不存在' 'Interface: utun199 absent')"
     fi
     ;;
   *)

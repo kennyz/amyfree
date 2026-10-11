@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
-from parse_sub import load_yaml, parse_subscription, to_yaml, SubscriptionError
+from parse_sub import load_yaml, parse_subscription, t, to_yaml, SubscriptionError
 from subscription import atomic_write
 
 ENTRY = 'MIMIO_CHAIN_ENTRY'
@@ -29,14 +29,14 @@ def read_state(directory):
 
 def chain_nodes(proxies, entry, exit):
     if entry == exit:
-        raise SubscriptionError('入口和出口请选择不同的节点。')
+        raise SubscriptionError(t('入口和出口请选择不同的节点。', 'Choose different entry and exit nodes.'))
     mapping = {proxy['name']: proxy for proxy in proxies}
     if entry not in mapping or exit not in mapping:
-        raise SubscriptionError('入口或出口已不在订阅中，请重新选择。')
+        raise SubscriptionError(t('入口或出口已不在订阅中，请重新选择。', 'The entry or exit node is no longer in the subscription. Choose again.'))
     if any(mapping[name]['type'] in ('direct', 'reject') for name in (entry, exit)):
-        raise SubscriptionError('请选择两个实际代理节点作为入口和出口。')
+        raise SubscriptionError(t('请选择两个实际代理节点作为入口和出口。', 'Choose two real proxy nodes as the entry and exit.'))
     if any(proxy['name'] in (ENTRY, EXIT) for proxy in proxies):
-        raise SubscriptionError('节点名称与链式代理保留名称冲突。')
+        raise SubscriptionError(t('节点名称与链式代理保留名称冲突。', 'A node name conflicts with a name reserved for chain proxy.'))
     first = copy.deepcopy(mapping[entry]); first['name'] = ENTRY
     first.pop('dialer-proxy', None)
     last = copy.deepcopy(mapping[exit]); last['name'] = EXIT
@@ -48,7 +48,7 @@ def replace_block(source, key, value):
     lines = source.splitlines(keepends=True)
     starts = [index for index, line in enumerate(lines) if re.match(r'^' + re.escape(key) + r'\s*:', line)]
     if len(starts) > 1:
-        raise SubscriptionError('配置存在重复字段，暂不能修改链式代理。')
+        raise SubscriptionError(t('配置存在重复字段，暂不能修改链式代理。', 'The config has duplicate fields, so chain proxy cannot be changed.'))
     replacement = '' if value is None else to_yaml({key: value}) + '\n'
     if not starts:
         return source + ('\n' if source and not source.endswith('\n') else '') + replacement
@@ -66,18 +66,18 @@ def render(source, proxies, previous, enabled, entry, exit):
     existing = data.get('proxies') or []
     groups = data.get('proxy-groups') or []
     if not isinstance(existing, list) or not isinstance(groups, list):
-        raise SubscriptionError('当前代理组配置格式暂不支持链式设置。')
+        raise SubscriptionError(t('当前代理组配置格式暂不支持链式设置。', 'The current proxy group format does not support chain settings.'))
     if not previous.get('enabled') and any(proxy.get('name') in (ENTRY, EXIT) for proxy in existing):
-        raise SubscriptionError('当前配置已有同名保留节点，请先更名。')
+        raise SubscriptionError(t('当前配置已有同名保留节点，请先更名。', 'The config already has a node with a reserved name. Rename it first.'))
     if previous.get('enabled'):
         for group in groups:
             if group.get('name') in GROUPS and group != {'name': group['name'], 'type': 'select', 'proxies': [EXIT]}:
-                raise SubscriptionError('链式代理组已被手工修改，请先恢复代理组设置。')
+                raise SubscriptionError(t('链式代理组已被手工修改，请先恢复代理组设置。', 'The chain proxy group was edited by hand. Restore the proxy group settings first.'))
     kept = [proxy for proxy in existing if proxy.get('name') not in (ENTRY, EXIT)]
     original = previous.get('original_groups') if previous.get('enabled') else [copy.deepcopy(group) for group in groups if group.get('name') in GROUPS]
     if enabled:
         if not original or not any(group.get('name') == 'PROXY' for group in original):
-            raise SubscriptionError('当前配置缺少 PROXY 代理组。')
+            raise SubscriptionError(t('当前配置缺少 PROXY 代理组。', 'The config is missing the PROXY group.'))
         kept += chain_nodes(proxies, entry, exit)
         groups = [{'name': group['name'], 'type': 'select', 'proxies': [EXIT]} if group.get('name') in GROUPS else group for group in groups]
     elif previous.get('enabled'):
@@ -109,6 +109,8 @@ def render(source, proxies, previous, enabled, entry, exit):
 def running(directory):
     try:
         os.kill(int((Path(directory) / '.mihomo.pid').read_text().strip()), 0)
+        return True
+    except PermissionError:
         return True
     except (OSError, ValueError):
         return False
@@ -144,9 +146,9 @@ def reload_runtime(directory, path, expected):
     with opener.open(req, timeout=5) as response:
         group = json.load(response)
     if expected.get('enabled') and group.get('now') != EXIT:
-        raise SubscriptionError('内核未采用链式出口。')
+        raise SubscriptionError(t('内核未采用链式出口。', 'The core did not switch to the chain exit.'))
     if not expected.get('enabled') and group.get('now') == EXIT:
-        raise SubscriptionError('内核尚未退出链式代理。')
+        raise SubscriptionError(t('内核尚未退出链式代理。', 'The core has not left chain proxy mode.'))
 
 
 def apply(directory, enabled, entry, exit):
@@ -173,9 +175,9 @@ def apply(directory, enabled, entry, exit):
         candidate.write_text(runtime); os.chmod(candidate, 0o600)
         result = subprocess.run([str(directory / 'mihomo'), '-t', '-d', str(directory), '-f', str(candidate)], capture_output=True, timeout=20)
         if result.returncode:
-            raise SubscriptionError('链式配置未通过内核检查，本次未保存。')
+            raise SubscriptionError(t('链式配置未通过内核检查，本次未保存。', 'The chain config failed the core check; nothing was saved.'))
     if source_path.read_text() != source:
-        raise SubscriptionError('配置已发生变化，请重新打开设置。')
+        raise SubscriptionError(t('配置已发生变化，请重新打开设置。', 'The config has changed. Reopen the settings.'))
     snapshots = {path: path.read_bytes() if path.exists() else None for path in updates}
     active = running(directory)
     attempted = False
@@ -191,8 +193,8 @@ def apply(directory, enabled, entry, exit):
         if attempted:
             if not runtime_path.exists(): atomic_write(runtime_path, source.replace('__API_SECRET__', secret).encode())
             try: reload_runtime(directory, runtime_path, previous)
-            except Exception: raise SubscriptionError('保存失败，文件已恢复，但内核还原失败，请重新启动代理。') from None
-        raise SubscriptionError('链式设置未生效，已恢复原配置。') from None
+            except Exception: raise SubscriptionError(t('保存失败，文件已恢复，但内核还原失败，请重新启动代理。', 'Save failed. The files were restored, but restoring the core failed. Restart the proxy.')) from None
+        raise SubscriptionError(t('链式设置未生效，已恢复原配置。', 'Chain settings did not take effect; the original config was restored.')) from None
     state['applied'] = active
     return state
 
@@ -212,7 +214,7 @@ def main():
             result = apply(args.home, args.action == 'enable', args.entry, args.exit)
         print(json.dumps(result, ensure_ascii=False)); return 0
     except Exception as error:
-        detail = str(error) if isinstance(error, SubscriptionError) else '无法读取或应用链式配置。'
+        detail = str(error) if isinstance(error, SubscriptionError) else t('无法读取或应用链式配置。', 'Could not read or apply the chain config.')
         print(json.dumps({'error': detail}, ensure_ascii=False)); return 1
 
 

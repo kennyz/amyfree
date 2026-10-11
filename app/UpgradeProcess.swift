@@ -34,7 +34,7 @@ enum UpgradeProcess {
             tick()
             if Date() > deadline {
                 process.terminate()
-                throw AppUpdateError(message: "更新超时，请检查网络后重试。")
+                throw AppUpdateError(message: tr("更新超时，请检查网络后重试。", "Update timed out. Check your network and try again."))
             }
             Thread.sleep(forTimeInterval: 0.15)
         }

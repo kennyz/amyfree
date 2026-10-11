@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory(prefix='amyfree-release-test-') as tmp:
     python = home / 'python3'
     subprocess.run([str(python), '-c', 'import yaml,ssl,certifi; assert ssl.create_default_context().cert_store_stats()["x509_ca"] > 0; print("PASS bundled Python, YAML and certificate trust store")'], env=env, check=True)
     subprocess.run([str(python), '-m', 'unittest', 'discover', '-s', str(repo / 'tests'), '-p', 'test_*.py'], env=env, check=True)
-    menu = subprocess.check_output([str(executable), '--menu-structure'], env=env, text=True)
+    menu = subprocess.check_output([str(executable), '--menu-structure', '-AmyfreeLanguage', 'zh'], env=env, text=True)
     menu_items = json.loads(menu)
     assert len(menu_items) > 0
     assert not any('升级中心' in item['title'] for item in menu_items)

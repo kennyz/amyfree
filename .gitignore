@@ -7,7 +7,7 @@ mihomo.gz
 geoip.dat
 geosite.dat
 country.mmdb
-providers/nodes.yaml
+**/providers/nodes.yaml
 
 # 构建产物
 build/

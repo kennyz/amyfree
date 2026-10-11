@@ -11,7 +11,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from parse_sub import SubscriptionError, parse_subscription, to_yaml
+from parse_sub import SubscriptionError, parse_subscription, t, to_yaml
 
 
 def atomic_write(path, data):
@@ -42,6 +42,8 @@ class SubscriptionManager:
             pid = int((self.directory / '.mihomo.pid').read_text().strip())
             os.kill(pid, 0)
             return True
+        except PermissionError:
+            return True
         except (OSError, ValueError):
             return False
 
@@ -52,11 +54,11 @@ class SubscriptionManager:
         except ValueError:
             valid = False
         if not valid or any(character.isspace() for character in url):
-            raise SubscriptionError('请输入有效的 http:// 或 https:// 订阅地址。')
+            raise SubscriptionError(t('请输入有效的 http:// 或 https:// 订阅地址。', 'Enter a valid http:// or https:// subscription URL.'))
         with tempfile.TemporaryDirectory(prefix='.sub-stage-', dir=self.directory) as temporary:
             work = Path(temporary)
             raw = work / 'response'
-            print('→ 拉取订阅…', flush=True)
+            print(t('→ 拉取订阅…', '→ Fetching subscription…'), flush=True)
             try:
                 response = subprocess.run([
                     'curl', '-sS', '-L', '--proto', '=http,https', '--proto-redir', '=http,https',
@@ -64,22 +66,22 @@ class SubscriptionManager:
                     '-A', 'mihomo/1.19.32', '-o', str(raw), '-w', '%{http_code}', url
                 ], capture_output=True, text=True, timeout=35)
             except (OSError, subprocess.TimeoutExpired):
-                raise SubscriptionError('订阅下载失败或超时，请检查网络后重试。') from None
+                raise SubscriptionError(t('订阅下载失败或超时，请检查网络后重试。', 'Subscription download failed or timed out. Check your network and try again.')) from None
             if response.returncode:
-                raise SubscriptionError(f'订阅下载失败（curl {response.returncode}），请检查网络或服务器证书。')
+                raise SubscriptionError(t(f'订阅下载失败（curl {response.returncode}），请检查网络或服务器证书。', f'Subscription download failed (curl {response.returncode}). Check your network or the server certificate.'))
             if response.stdout.strip() != '200':
-                raise SubscriptionError(f'订阅服务器返回 HTTP {response.stdout.strip() or "未知"}。')
+                raise SubscriptionError(t(f'订阅服务器返回 HTTP {response.stdout.strip() or "未知"}。', f'The subscription server returned HTTP {response.stdout.strip() or "unknown"}.'))
             proxies, form, failures = parse_subscription(raw)
-            print(f'✓ {form}，解析出 {len(proxies)} 个节点', flush=True)
+            print(t(f'✓ {form}，解析出 {len(proxies)} 个节点', f'✓ {form}: parsed {len(proxies)} nodes'), flush=True)
             if failures:
-                print(f'! 跳过 {len(failures)} 条不支持或无效的链接', flush=True)
+                print(t(f'! 跳过 {len(failures)} 条不支持或无效的链接', f'! Skipped {len(failures)} unsupported or invalid links'), flush=True)
             self.validate(proxies, work)
             return proxies
 
     def validate(self, proxies, work):
         binary = self.directory / 'mihomo'
         if not os.access(binary, os.X_OK):
-            raise SubscriptionError('缺少 mihomo 内核，无法检查节点配置。')
+            raise SubscriptionError(t('缺少 mihomo 内核，无法检查节点配置。', 'The mihomo core is missing, so the node config cannot be checked.'))
         # 不运行机场下发的 DNS、规则或脚本，仅校验节点。
         candidate = work / 'validate.yaml'
         candidate.write_text(to_yaml({
@@ -91,19 +93,19 @@ class SubscriptionManager:
             result = subprocess.run([str(binary), '-t', '-d', str(self.directory), '-f', str(candidate)],
                                     capture_output=True, timeout=15)
         except (OSError, subprocess.TimeoutExpired):
-            raise SubscriptionError('节点配置检查失败或超时，本次未保存。') from None
+            raise SubscriptionError(t('节点配置检查失败或超时，本次未保存。', 'Node config check failed or timed out; nothing was saved.')) from None
         if result.returncode:
-            raise SubscriptionError('节点配置未通过内核检查，请检查节点协议、端口或认证参数。')
-        print('✓ 内核节点检查通过', flush=True)
+            raise SubscriptionError(t('节点配置未通过内核检查，请检查节点协议、端口或认证参数。', 'The node config failed the core check. Check the protocol, port or credentials.'))
+        print(t('✓ 内核节点检查通过', '✓ Core node check passed'), flush=True)
 
     def control(self, action):
         try:
             result = subprocess.run(['bash', str(self.directory / 'mihomoctl.sh'), action],
                                     capture_output=True, timeout=20)
         except (OSError, subprocess.TimeoutExpired):
-            raise SubscriptionError('代理服务操作超时或失败。') from None
+            raise SubscriptionError(t('代理服务操作超时或失败。', 'The proxy service operation timed out or failed.')) from None
         if result.returncode:
-            raise SubscriptionError('代理服务启动失败，请检查端口占用或当前配置。')
+            raise SubscriptionError(t('代理服务启动失败，请检查端口占用或当前配置。', 'The proxy service failed to start. Check for port conflicts or the current config.'))
 
     def verify(self, proxies):
         try:
@@ -120,23 +122,23 @@ class SubscriptionManager:
                 with opener.open(request, timeout=4) as response:
                     loaded = json.load(response).get('proxies', [])
                 if len(loaded) == len(proxies) and {proxy.get('name') for proxy in loaded} == expected:
-                    print(f'✓ 内核已加载 {len(proxies)} 个节点', flush=True)
+                    print(t(f'✓ 内核已加载 {len(proxies)} 个节点', f'✓ Core loaded {len(proxies)} nodes'), flush=True)
                     return
             except Exception:
                 pass
             time.sleep(.2)
-        raise SubscriptionError('内核未能加载完整节点列表。')
+        raise SubscriptionError(t('内核未能加载完整节点列表。', 'The core did not load the full node list.'))
 
     def execute(self, operation, url=None):
         if url is None:
             try:
                 url = self.url_file.read_text().strip()
             except OSError:
-                raise SubscriptionError('尚未设置订阅地址。') from None
+                raise SubscriptionError(t('尚未设置订阅地址。', 'No subscription URL set yet.')) from None
         proxies = self.fetch(url)
         nodes = (to_yaml({'proxies': proxies}) + '\n').encode('utf-8')
         if operation == 'test':
-            print('✓ 订阅测试通过；订阅地址、节点和代理状态均未修改', flush=True)
+            print(t('✓ 订阅测试通过；订阅地址、节点和代理状态均未修改', '✓ Subscription test passed; the URL, nodes and proxy state were not changed'), flush=True)
             return
         # 延迟导入避免与链式设置模块的 atomic_write 导入形成循环。
         from chain_proxy import subscription_updates
@@ -166,7 +168,7 @@ class SubscriptionManager:
                 try:
                     self.control('stop')
                 except Exception:
-                    failures.append('停止新服务')
+                    failures.append(t('停止新服务', 'stopping the new service'))
             for path, content in snapshots.items():
                 try:
                     if content is None:
@@ -174,16 +176,16 @@ class SubscriptionManager:
                     else:
                         atomic_write(path, content)
                 except OSError:
-                    failures.append('恢复配置文件')
+                    failures.append(t('恢复配置文件', 'restoring config files'))
             if was_running and stopped:
                 try:
                     self.control('start')
                 except Exception:
-                    failures.append('恢复原服务')
+                    failures.append(t('恢复原服务', 'restoring the previous service'))
             if failures:
-                raise SubscriptionError('更新失败，自动恢复未完成：' + '、'.join(failures) + '。') from None
-            raise SubscriptionError('订阅更新未生效，已恢复原订阅与节点，请检查代理配置或端口占用。') from None
-        print('✓ 订阅已保存，新节点已生效', flush=True)
+                raise SubscriptionError(t('更新失败，自动恢复未完成：' + '、'.join(failures) + '。', 'Update failed and automatic recovery was incomplete: ' + ', '.join(failures) + '.')) from None
+            raise SubscriptionError(t('订阅更新未生效，已恢复原订阅与节点，请检查代理配置或端口占用。', 'The subscription update did not take effect; the previous subscription and nodes were restored. Check the proxy config or port conflicts.')) from None
+        print(t('✓ 订阅已保存，新节点已生效', '✓ Subscription saved; new nodes are active'), flush=True)
 
 
 def main():
@@ -197,7 +199,7 @@ def main():
         return 0
     except Exception as error:
         # 解析器和 curl 的原始错误可能包含凭据；仅输出明确的用户提示。
-        detail = str(error) if isinstance(error, SubscriptionError) else '订阅操作失败，请检查文件权限或配置。'
+        detail = str(error) if isinstance(error, SubscriptionError) else t('订阅操作失败，请检查文件权限或配置。', 'Subscription operation failed. Check file permissions or the config.')
         print(f'✗ {detail}', file=sys.stderr)
         return 1
 

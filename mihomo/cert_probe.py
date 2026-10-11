@@ -7,11 +7,13 @@ import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from parse_sub import t
+
 
 def classify_dates(not_before, not_after, now=None, trusted=True):
     now = time.time() if now is None else now
     if not_after <= not_before:
-        return {'state': 'unknown', 'reason': '证书日期无法解析'}
+        return {'state': 'unknown', 'reason': t('证书日期无法解析', 'Could not parse certificate dates')}
     days = math.ceil((not_after - now) / 86400)
     if now < not_before: state = 'not_yet_valid'
     elif now >= not_after: state = 'expired'
@@ -25,15 +27,15 @@ def classify_dates(not_before, not_after, now=None, trusted=True):
 def tls_target(proxy):
     protocol = proxy.get('type', '').lower()
     if proxy.get('reality-opts'):
-        return {'state': 'not_applicable', 'reason': 'REALITY 不使用常规 CA 证书'}
+        return {'state': 'not_applicable', 'reason': t('REALITY 不使用常规 CA 证书', 'REALITY does not use regular CA certificates')}
     if protocol in ('hysteria', 'hysteria2', 'tuic', 'quic'):
-        return {'state': 'unsupported', 'reason': '暂不支持 QUIC 证书检查'}
+        return {'state': 'unsupported', 'reason': t('暂不支持 QUIC 证书检查', 'QUIC certificate checks are not supported yet')}
     if protocol != 'trojan' and not proxy.get('tls'):
-        return {'state': 'not_applicable', 'reason': '此节点未使用 TLS'}
+        return {'state': 'not_applicable', 'reason': t('此节点未使用 TLS', 'This node does not use TLS')}
     host = proxy.get('server')
     port = proxy.get('port')
     if not host or not isinstance(port, int):
-        return {'state': 'unknown', 'reason': '缺少 TLS 服务器地址'}
+        return {'state': 'unknown', 'reason': t('缺少 TLS 服务器地址', 'Missing TLS server address')}
     return (host, port, proxy.get('servername') or proxy.get('sni') or host)
 
 
@@ -70,20 +72,20 @@ def inspect_certificate(proxy, timeout=3):
             der = handshake(context)
         before, after = read_dates(der)
         result = classify_dates(before, after, trusted=trusted)
-        if not trusted: result['reason'] = '证书信任或域名校验未通过'
+        if not trusted: result['reason'] = t('证书信任或域名校验未通过', 'Certificate trust or hostname check failed')
         return result
     except Exception:
-        return {'state': 'unknown', 'reason': '无法读取服务器证书', 'checked_at': time.time()}
+        return {'state': 'unknown', 'reason': t('无法读取服务器证书', 'Could not read the server certificate'), 'checked_at': time.time()}
 
 
 def combine_certificates(certificates):
     rank = {'expired': 0, 'not_yet_valid': 1, 'untrusted': 2, 'unknown': 3, 'unsupported': 3,
             'expiring': 4, 'valid': 5, 'not_applicable': 6}
-    if not certificates: return {'state': 'unknown', 'reason': '无法确认链路证书'}
+    if not certificates: return {'state': 'unknown', 'reason': t('无法确认链路证书', 'Could not confirm the chain certificates')}
     selected = min(certificates, key=lambda item: (rank.get(item['state'], 3), item.get('not_after', float('inf'))))
     result = dict(selected)
     result['chain'] = True
-    result['reason'] = '入口与出口中最需关注的证书' + ('；' + result['reason'] if result.get('reason') else '')
+    result['reason'] = t('入口与出口中最需关注的证书', 'The more urgent certificate of the entry and exit') + (t('；', '; ') + result['reason'] if result.get('reason') else '')
     return result
 
 

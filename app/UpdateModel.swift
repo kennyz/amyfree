@@ -29,12 +29,12 @@ enum UpdateRelease {
               let tag = object["tag_name"] as? String, tag.hasPrefix("v"),
               let version = AppVersion(tag), let current = AppVersion(currentVersion),
               let assets = object["assets"] as? [[String: Any]] else {
-            throw AppUpdateError(message: "无法读取更新信息，请稍后重试。")
+            throw AppUpdateError(message: tr("无法读取更新信息，请稍后重试。", "Could not read update info. Please try again later."))
         }
         guard version > current else { return nil }
         let expected = ["Amyfree-\(tag.dropFirst())-macOS-arm64.zip", "SHA256SUMS.txt"]
         guard expected.allSatisfy({ name in assets.filter { $0["name"] as? String == name && $0["state"] as? String == "uploaded" }.count == 1 }) else {
-            throw AppUpdateError(message: "新版安装包尚未准备好，请稍后重试。")
+            throw AppUpdateError(message: tr("新版安装包尚未准备好，请稍后重试。", "The new package isn't ready yet. Please try again later."))
         }
         let archive = assets.first { $0["name"] as? String == expected[0] }
         return AvailableUpdate(tag: tag, notes: String((object["body"] as? String ?? "").prefix(600)),
@@ -46,7 +46,7 @@ enum UpdateRelease {
 struct UpgradeProgress {
     var received: Int64 = 0
     var total: Int64 = 0
-    var phase: String = "准备下载…"
+    var phase: String = tr("准备下载…", "Preparing download…")
     var fraction: Double? { total > 0 ? min(1, max(0, Double(received) / Double(total))) : nil }
     var text: String {
         guard received > 0 || total > 0 else { return phase }
@@ -54,10 +54,10 @@ struct UpgradeProgress {
         if let fraction = fraction {
             return "\(phase) \(Int(fraction * 100))% · \(downloaded) / \(String(format: "%.1f MB", Double(total) / 1_000_000))"
         }
-        return "\(phase) 已下载 \(downloaded)"
+        return phase + tr(" 已下载 ", " downloaded ") + downloaded
     }
     func retainingDownload(from previous: UpgradeProgress?) -> UpgradeProgress {
-        guard total == 0 && received == 0 && phase != "正在下载…", let previous = previous else { return self }
+        guard total == 0 && received == 0 && phase != tr("正在下载…", "Downloading…"), let previous = previous else { return self }
         return UpgradeProgress(received: previous.received, total: previous.total, phase: phase)
     }
 }
@@ -79,7 +79,7 @@ enum UpgradeComponent: String, CaseIterable {
         switch self { case .application: return nil; case .geoip: return "geoip.dat"; case .geosite: return "geosite.dat"; case .mmdb: return "country.mmdb" }
     }
     var detail: String {
-        switch self { case .application: return "应用版本"; case .geoip: return "IP 地理分流规则"; case .geosite: return "域名分流规则"; case .mmdb: return "IP 地理信息数据库" }
+        switch self { case .application: return tr("应用版本", "App"); case .geoip: return tr("IP 地理分流规则", "GeoIP rules"); case .geosite: return tr("域名分流规则", "GeoSite rules"); case .mmdb: return tr("IP 地理信息数据库", "IP geolocation database") }
     }
 }
 
@@ -87,7 +87,7 @@ struct UpgradeRowState {
     var available = false
     var checking = false
     var working = false
-    var message = "尚未检查"
+    var message = tr("尚未检查", "Not checked yet")
     var progress: UpgradeProgress?
 }
 

@@ -13,6 +13,11 @@ import tempfile
 import time
 from datetime import datetime, timezone
 
+
+def t(zh, en):
+    """提示语言：AMYFREE_LANG=en 输出英文，默认中文（菜单栏 App 按界面语言传入）。"""
+    return en if os.environ.get('AMYFREE_LANG') == 'en' else zh
+
 FILES = ('geoip.dat', 'geosite.dat', 'country.mmdb')
 DEFAULT_BASE = 'https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release'
 
@@ -77,7 +82,7 @@ def fetch(url, target, progress=None):
                 total = known_total or (response_size(headers.read_text(errors='replace')) if headers.exists() else 0)
                 progress(target.stat().st_size if target.exists() else 0, total)
                 if process.poll() is not None: break
-                if time.monotonic() > deadline: raise GeoUpdateError('下载超时，请稍后重试。')
+                if time.monotonic() > deadline: raise GeoUpdateError(t('下载超时，请稍后重试。', 'Download timed out. Please try again later.'))
                 time.sleep(.15)
             code = process.returncode
             if code == 0:
@@ -89,7 +94,7 @@ def fetch(url, target, progress=None):
                 try: process.wait(timeout=5)
                 except subprocess.TimeoutExpired: process.kill(); process.wait()
     if code:
-        raise GeoUpdateError('下载失败，请检查网络后重试。原规则库未修改。')
+        raise GeoUpdateError(t('下载失败，请检查网络后重试。原规则库未修改。', 'Download failed. Check your network and try again. The existing rule data was not changed.'))
 
 
 def checksum(base, name, stage, download):
@@ -97,7 +102,7 @@ def checksum(base, name, stage, download):
     parts = (stage / (name + '.sha256sum')).read_text().split()
     expected = parts[0].lower() if parts else ''
     if not re.fullmatch('[0-9a-f]{64}', expected):
-        raise GeoUpdateError('无法读取规则库校验值，原规则库未修改。')
+        raise GeoUpdateError(t('无法读取规则库校验值，原规则库未修改。', 'Could not read the rule data checksum. The existing rule data was not changed.'))
     return expected
 
 
@@ -124,7 +129,7 @@ def validate(directory, core):
         result = subprocess.run([str(core), '-t', '-d', str(directory), '-f', str(config)],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
         if result.returncode:
-            raise GeoUpdateError('规则库格式检查失败，原规则库未修改。')
+            raise GeoUpdateError(t('规则库格式检查失败，原规则库未修改。', 'Rule data format check failed. The existing rule data was not changed.'))
 
 
 def replace(source, target):
@@ -140,28 +145,28 @@ def replace(source, target):
 def update(directory, download=fetch, validator=validate, replacer=replace, selected=FILES, progress=None):
     selected = tuple(selected)
     if not selected or len(set(selected)) != len(selected) or any(name not in FILES for name in selected):
-        raise GeoUpdateError('规则库名称无效。')
+        raise GeoUpdateError(t('规则库名称无效。', 'Invalid rule data name.'))
     directory = Path(directory).resolve()
     core = directory / 'mihomo'
     if not core.is_file() or not os.access(core, os.X_OK):
-        raise GeoUpdateError('尚未安装 mihomo 内核，请先安装 Amyfree。')
+        raise GeoUpdateError(t('尚未安装 mihomo 内核，请先安装 Amyfree。', 'The mihomo core is not installed. Install Amyfree first.'))
     # Keep the inode stable: unlinking flock files can allow overlapping updates.
     with (directory / '.geodata-update.lock').open('a') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise GeoUpdateError('规则库正在更新，请等待完成。')
+            raise GeoUpdateError(t('规则库正在更新，请等待完成。', 'Rule data is already updating. Please wait for it to finish.'))
         with tempfile.TemporaryDirectory(prefix='.geodata-update-', dir=directory) as tmp:
             stage = Path(tmp)
             base = os.environ.get('GEODATA_BASE', DEFAULT_BASE).rstrip('/')
             if download is fetch: base = resolve_source(base)
             for name in FILES:
                 if name not in selected:
-                    if not (directory / name).is_file(): raise GeoUpdateError('缺少其他规则库，请先完整安装 Amyfree。')
+                    if not (directory / name).is_file(): raise GeoUpdateError(t('缺少其他规则库，请先完整安装 Amyfree。', 'Other rule data files are missing. Do a full Amyfree install first.'))
                     shutil.copyfile(directory / name, stage / name)
                     continue
                 if progress: progress({'phase': 'downloading', 'file': name, 'downloaded': 0, 'total': 0})
-                else: print('正在下载 ' + name + '…', flush=True)
+                else: print(t('正在下载 ', 'Downloading ') + name + '…', flush=True)
                 expected = checksum(base, name, stage, download)
                 if progress and download is fetch:
                     fetch(base + '/' + name, stage / name,
@@ -171,11 +176,11 @@ def update(directory, download=fetch, validator=validate, replacer=replace, sele
                     if progress: progress({'phase': 'downloading', 'file': name, 'downloaded': (stage / name).stat().st_size, 'total': (stage / name).stat().st_size})
                 actual = hashlib.sha256((stage / name).read_bytes()).hexdigest()
                 if actual != expected:
-                    raise GeoUpdateError(name + ' 校验失败，原规则库未修改，请稍后重试。')
+                    raise GeoUpdateError(name + t(' 校验失败，原规则库未修改，请稍后重试。', ' failed verification. The existing rule data was not changed. Please try again later.'))
             if progress: progress({'phase': 'validating'})
             validator(stage, core)
             if all((directory / name).is_file() and (directory / name).read_bytes() == (stage / name).read_bytes() for name in FILES):
-                return '规则库已是最新版本。'
+                return t('规则库已是最新版本。', 'Rule data is up to date.')
             backup = stage / 'backup'; backup.mkdir()
             for name in FILES:
                 if (directory / name).exists(): shutil.copyfile(directory / name, backup / name)
@@ -187,13 +192,13 @@ def update(directory, download=fetch, validator=validate, replacer=replace, sele
                 for name in FILES:
                     if (backup / name).exists(): os.replace(backup / name, directory / name)
                     else: (directory / name).unlink(missing_ok=True)
-                raise GeoUpdateError('保存失败，已恢复原规则库。')
+                raise GeoUpdateError(t('保存失败，已恢复原规则库。', 'Save failed; the previous rule data was restored.'))
             try:
                 (directory / '.geodata-updated-at').write_text(datetime.now(timezone.utc).isoformat())
             except OSError:
                 pass
             labels = {'geoip.dat': 'GeoIP', 'geosite.dat': 'GeoSite', 'country.mmdb': 'MMDB'}
-            return '、'.join(labels[name] for name in selected) + ' 已更新。下次启用代理时加载新规则库。'
+            return t('、', ', ').join(labels[name] for name in selected) + t(' 已更新。下次启用代理时加载新规则库。', ' updated. The new rule data loads next time the proxy starts.')
 
 
 def main():
@@ -215,7 +220,7 @@ def main():
             if args.json: emit({'event': 'complete', 'message': message})
             else: print(message)
     except Exception as error:
-        message = str(error) if isinstance(error, GeoUpdateError) else '更新未完成，请稍后重试。'
+        message = str(error) if isinstance(error, GeoUpdateError) else t('更新未完成，请稍后重试。', 'Update did not finish. Please try again later.')
         if args.json: emit({'event': 'error', 'message': message})
         else: print(message)
         raise SystemExit(1)

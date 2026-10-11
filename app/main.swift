@@ -41,7 +41,7 @@ func run(_ launchPath: String, _ args: [String], timeout: TimeInterval = 25) -> 
     do {
         try p.run()
     } catch {
-        return RunResult(status: -1, out: "无法执行: \(error.localizedDescription)")
+        return RunResult(status: -1, out: tr("无法执行: ", "Could not run: ") + error.localizedDescription)
     }
 
     // 超时保护：避免 curl 卡住导致菜单无响应
@@ -55,7 +55,7 @@ func run(_ launchPath: String, _ args: [String], timeout: TimeInterval = 25) -> 
     while sem.wait(timeout: .now() + 0.05) == .timedOut {
         if Date() > deadline {
             p.terminate()
-            return RunResult(status: -2, out: "命令超时")
+            return RunResult(status: -2, out: tr("命令超时", "Command timed out"))
         }
     }
     p.waitUntilExit()
@@ -66,9 +66,14 @@ func run(_ launchPath: String, _ args: [String], timeout: TimeInterval = 25) -> 
 // MARK: - 状态
 
 var isRunning: Bool {
-    guard let s = try? String(contentsOfFile: PID_FILE, encoding: .utf8),
-          let pid = Int32(s.trimmingCharacters(in: .whitespacesAndNewlines)) else { return false }
-    return kill(pid, 0) == 0
+    guard let s = try? String(contentsOfFile: PID_FILE, encoding: .utf8) else {
+        // 旧版以 root 启动的内核会留下仅 root 可读的 pid 文件，改问本地 API
+        guard FileManager.default.fileExists(atPath: PID_FILE) else { return false }
+        return httpGet("http://\(API)/version", timeout: 1) != nil
+    }
+    guard let pid = Int32(s.trimmingCharacters(in: .whitespacesAndNewlines)) else { return false }
+    // TUN 模式下内核以 root 运行，kill 返回 EPERM 也说明进程存在
+    return kill(pid, 0) == 0 || errno == EPERM
 }
 
 func apiSecret() -> String {
@@ -92,6 +97,29 @@ func httpGet(_ urlStr: String, timeout: TimeInterval = 5) -> String? {
     }.resume()
     _ = sem.wait(timeout: .now() + timeout + 2)
     return result
+}
+
+/// 同步发送 PUT/DELETE 等请求到本地 API，返回是否成功（放后台线程调用）
+@discardableResult
+func httpSend(_ method: String, _ urlStr: String, json: [String: Any]? = nil, timeout: TimeInterval = 5) -> Bool {
+    guard let url = URL(string: urlStr) else { return false }
+    var req = URLRequest(url: url)
+    req.httpMethod = method
+    req.timeoutInterval = timeout
+    let secret = apiSecret()
+    if !secret.isEmpty { req.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization") }
+    if let json = json {
+        req.httpBody = try? JSONSerialization.data(withJSONObject: json)
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    }
+    var ok = false
+    let sem = DispatchSemaphore(value: 0)
+    URLSession.shared.dataTask(with: req) { _, response, _ in
+        ok = ((response as? HTTPURLResponse)?.statusCode).map { (200..<300).contains($0) } ?? false
+        sem.signal()
+    }.resume()
+    _ = sem.wait(timeout: .now() + timeout + 2)
+    return ok
 }
 
 /// 通过代理拿出口 IP（顺带证明代理确实通）
@@ -119,12 +147,15 @@ func fetchExitIP() -> String? {
     return out?.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " / ")
 }
 
-/// 取"手动选择"组当前节点名与延迟
-func fetchCurrentNode() -> (name: String, delay: Int)? {
-    guard let json = httpGet("http://\(API)/proxies/%E6%89%8B%E5%8A%A8%E9%80%89%E6%8B%A9"),
+/// 取实际承载代理流量的 PROXY 组：当前节点、延迟，以及是否被手工固定。
+/// PROXY 是自动测速组，分流规则都指向它；菜单选节点时把它固定到所选节点，"自动选择"则解除固定。
+func fetchCurrentNode() -> (name: String, delay: Int, fixed: String?)? {
+    guard let json = httpGet("http://\(API)/proxies/PROXY"),
           let data = json.data(using: .utf8),
           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
     let now = obj["now"] as? String ?? "-"
+    // 固定的节点不可用时内核会临时改用最快节点，此时 now 与 fixed 不同
+    let fixed = (obj["fixed"] as? String).flatMap { $0.isEmpty ? nil : $0 }
     var delay = 0
     if let hist = obj["history"] as? [[String: Any]], let last = hist.last {
         delay = last["delay"] as? Int ?? 0
@@ -139,7 +170,7 @@ func fetchCurrentNode() -> (name: String, delay: Int)? {
             delay = nlast["delay"] as? Int ?? 0
         }
     }
-    return (now, delay)
+    return (now, delay, fixed)
 }
 
 /// 取 TUN 是否开启
@@ -192,6 +223,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var probeWindow: NodeProbeWindowController?
     var chainWindow: ChainWindowController?
     var cachedNodeProxies: [[String: Any]] = []
+    var currentNodeName: String?   // 被固定的节点；自动选择时为 nil
+    var autoNodeName: String?      // 自动选择时内核当前选中的最快节点
     var probeStatusItem: NSMenuItem!
     var probeNowItem: NSMenuItem!
     var chainItem: NSMenuItem!
@@ -210,7 +243,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         do { try AppRuntime.prepare(directory: CFG_DIR) }
         catch {
-            showResult(title: "无法准备运行组件", text: error.localizedDescription)
+            showResult(title: tr("无法准备运行组件", "Could not prepare runtime components"), text: error.localizedDescription)
             NSApp.terminate(nil)
             return
         }
@@ -229,7 +262,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self = self else { return }
             self.probeWindow?.update()
             self.rebuildNodeList()
-            self.probeStatusItem.title = self.probes.checking ? "节点检测中…" : "节点自动检测：每 30 秒"
+            self.probeStatusItem.title = self.probeStatusTitle()
             self.probeNowItem.isEnabled = !self.probes.checking && !self.probes.downloading
             self.chainItem.state = self.probes.chain["enabled"] as? Bool == true ? .on : .off
         }
@@ -242,7 +275,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !FileManager.default.fileExists(atPath: SUB_FILE) { editSubscription() }
         upgrades.onChange = { [weak self] in self?.upgradeWindow?.update(); self?.updateUpgradeBadge() }
         upgrades.onApplicationReady = { [weak self] directory in
-            guard let self = self else { throw AppUpdateError(message: "应用已退出，请重试。") }
+            guard let self = self else { throw AppUpdateError(message: tr("应用已退出，请重试。", "The app has quit. Please try again.")) }
             try AppUpdater.handoff(directory)
             self.updatingForRestart = true
             self.probes.stop(); self.refreshTimer?.invalidate(); self.updateTimer?.invalidate()
@@ -277,44 +310,51 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.removeAllItems()
         headerItem = NSMenuItem(title: "Amyfree", action: nil, keyEquivalent: "")
-        runningItem = NSMenuItem(title: "Amyfree：检测中…", action: nil, keyEquivalent: "")
+        runningItem = NSMenuItem(title: tr("Amyfree：检测中…", "Amyfree: checking…"), action: nil, keyEquivalent: "")
         runningItem.isEnabled = false; menu.addItem(runningItem)
-        nodeItem = NSMenuItem(title: "当前节点：—", action: nil, keyEquivalent: "")
+        nodeItem = NSMenuItem(title: tr("当前节点：—", "Current node: —"), action: nil, keyEquivalent: "")
         nodeItem.isEnabled = false; menu.addItem(nodeItem)
         menu.addItem(.separator())
-        toggleItem = action("启用代理", #selector(toggleProxy), "t"); menu.addItem(toggleItem)
+        toggleItem = action(tr("启用代理", "Enable Proxy"), #selector(toggleProxy), "t"); menu.addItem(toggleItem)
 
         nodesMenu.autoenablesItems = false; nodesMenu.delegate = self
-        nodePickerItem = NSMenuItem(title: "选择节点", action: nil, keyEquivalent: "")
+        nodePickerItem = NSMenuItem(title: tr("选择节点", "Select Node"), action: nil, keyEquivalent: "")
         nodePickerItem.submenu = nodesMenu; menu.addItem(nodePickerItem)
-        nodeListLabel = NSMenuItem(title: "订阅节点", action: nil, keyEquivalent: "")
+        nodeListLabel = NSMenuItem(title: tr("订阅节点", "Subscription Nodes"), action: nil, keyEquivalent: "")
         nodeListLabel.isEnabled = false
         nodeSeparator = .separator()
-        probeNowItem = action("立即检测全部节点", #selector(detectNodes))
-        probeStatusItem = NSMenuItem(title: "自动检测：每 30 秒", action: nil, keyEquivalent: "")
+        probeNowItem = action(tr("立即检测全部节点", "Test All Nodes Now"), #selector(detectNodes))
+        probeStatusItem = NSMenuItem(title: probeStatusTitle(), action: nil, keyEquivalent: "")
         probeStatusItem.isEnabled = false
-        menu.addItem(action("节点测速…", #selector(showNodeSpeed), "d"))
-        upgradeItem = action("升级中心…", #selector(showUpgradeCenter))
+        menu.addItem(action(tr("节点测速…", "Node Speed Test…"), #selector(showNodeSpeed), "d"))
+        upgradeItem = action(tr("升级中心…", "Upgrade Center…"), #selector(showUpgradeCenter))
         menu.addItem(.separator())
 
-        menu.addItem(submenu("订阅", [action("修改订阅地址…", #selector(editSubscription), "u"),
-                                       action("更新订阅并重启", #selector(doRefreshSub), "r")]))
-        sysProxyItem = action("系统代理", #selector(toggleSystemProxy), "s")
-        tunItem = action("TUN 全局接管", #selector(toggleTun))
-        loginItem = action("开机自启（Amyfree）", #selector(toggleLogin))
-        chainItem = action("链式代理…", #selector(showChainSettings))
-        menu.addItem(submenu("设置", [sysProxyItem, action("分流设置…", #selector(showRoutingRules), ","),
-                                       chainItem, .separator(), tunItem, loginItem]))
-        exitIPItem = NSMenuItem(title: "出口 IP：—", action: nil, keyEquivalent: "")
+        menu.addItem(submenu(tr("订阅", "Subscription"), [action(tr("修改订阅地址…", "Edit Subscription URL…"), #selector(editSubscription), "u"),
+                                       action(tr("更新订阅并重启", "Update Subscription & Restart"), #selector(doRefreshSub), "r")]))
+        sysProxyItem = action(tr("系统代理", "System Proxy"), #selector(toggleSystemProxy), "s")
+        tunItem = action(tr("TUN 全局接管", "TUN Mode (All Traffic)"), #selector(toggleTun))
+        loginItem = action(tr("开机自启（Amyfree）", "Launch at Login (Amyfree)"), #selector(toggleLogin))
+        chainItem = action(tr("链式代理…", "Chain Proxy…"), #selector(showChainSettings))
+        let languageItems = AppLanguage.allCases.map { language -> NSMenuItem in
+            let item = action(language.title, #selector(changeLanguage(_:)))
+            item.representedObject = language.rawValue
+            item.state = language == AppLanguage.current ? .on : .off
+            return item
+        }
+        menu.addItem(submenu(tr("设置", "Settings"), [sysProxyItem, action(tr("分流设置…", "Routing Rules…"), #selector(showRoutingRules), ","),
+                                       chainItem, .separator(), tunItem, loginItem, .separator(),
+                                       submenu("语言 / Language", languageItems)]))
+        exitIPItem = NSMenuItem(title: tr("出口 IP：—", "Exit IP: —"), action: nil, keyEquivalent: "")
         exitIPItem.isEnabled = false
-        menu.addItem(submenu("工具", [exitIPItem, action("验证出口 IP…", #selector(doVerify), "v"), .separator(),
-                                       action("打开终端（已配代理）", #selector(openTerminal)),
-                                       action("查看日志", #selector(openLog), "l"),
-                                       action("打开配置目录", #selector(openConfigDir)), .separator(),
+        menu.addItem(submenu(tr("工具", "Tools"), [exitIPItem, action(tr("验证出口 IP…", "Verify Exit IP…"), #selector(doVerify), "v"), .separator(),
+                                       action(tr("打开终端（已配代理）", "Open Terminal (Proxy Set)"), #selector(openTerminal)),
+                                       action(tr("查看日志", "View Log"), #selector(openLog), "l"),
+                                       action(tr("打开配置目录", "Open Config Folder"), #selector(openConfigDir)), .separator(),
                                        upgradeItem,
-                                       action("关于 Amyfree…", #selector(showAbout))]))
+                                       action(tr("关于 Amyfree…", "About Amyfree…"), #selector(showAbout))]))
         menu.addItem(.separator())
-        menu.addItem(action("退出 Amyfree", #selector(quitApp), "q"))
+        menu.addItem(action(tr("退出 Amyfree", "Quit Amyfree"), #selector(quitApp), "q"))
         rebuildNodeList()
     }
 
@@ -325,29 +365,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !busy else { return }
 
         let running = isRunning
-        toggleItem.title = running ? "关闭代理" : "启用代理"
+        toggleItem.title = running ? tr("关闭代理", "Disable Proxy") : tr("启用代理", "Enable Proxy")
 
         if running {
-            statusItem.button?.title = " 开启"
-            runningItem.title = "Amyfree：代理已开启"
+            statusItem.button?.title = tr(" 开启", " On")
+            runningItem.title = tr("Amyfree：代理已开启", "Amyfree: proxy on")
         } else {
-            statusItem.button?.title = " 关闭"
-            runningItem.title = "Amyfree：代理已关闭"
-            exitIPItem.title = "出口 IP: —"
-            nodeItem.title = "当前节点: —"
+            statusItem.button?.title = tr(" 关闭", " Off")
+            runningItem.title = tr("Amyfree：代理已关闭", "Amyfree: proxy off")
+            exitIPItem.title = tr("出口 IP: —", "Exit IP: —")
+            nodeItem.title = tr("当前节点: —", "Current node: —")
         }
 
         tunItem.state = tunEnabled() ? .on : .off
         switch loginStartup.state {
-        case .enabled: loginItem.state = .on; loginItem.title = "开机自启（Amyfree）"
-        case .requiresApproval: loginItem.state = .mixed; loginItem.title = "开机自启（待系统允许）"
-        case .disabled, .unavailable: loginItem.state = .off; loginItem.title = "开机自启（Amyfree）"
+        case .enabled: loginItem.state = .on; loginItem.title = tr("开机自启（Amyfree）", "Launch at Login (Amyfree)")
+        case .requiresApproval: loginItem.state = .mixed; loginItem.title = tr("开机自启（待系统允许）", "Launch at Login (needs approval)")
+        case .disabled, .unavailable: loginItem.state = .off; loginItem.title = tr("开机自启（Amyfree）", "Launch at Login (Amyfree)")
         }
 
         // 网络/系统查询放后台，避免卡菜单
         DispatchQueue.global(qos: .utility).async {
             var ip: String?
-            var node: (name: String, delay: Int)?
+            var node: (name: String, delay: Int, fixed: String?)?
             var proxyAny = false
             if isRunning {
                 ip = fetchExitIP()
@@ -363,37 +403,44 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             DispatchQueue.main.async {
                 self.cachedNodeProxies = providerNodes
+                self.currentNodeName = isRunning ? node?.fixed : nil
+                self.autoNodeName = isRunning && node != nil && node?.fixed == nil ? node?.name : nil
                 if isRunning {
                     if let got = ip {
                         self.exitIPFailCount = 0
-                        self.exitIPItem.title = "出口 IP: \(got)"
+                        self.exitIPItem.title = tr("出口 IP: ", "Exit IP: ") + got
                     } else {
                         self.exitIPFailCount += 1
                         self.exitIPItem.title = self.exitIPFailCount >= 2
-                            ? "出口 IP: 获取失败（节点可能已失效）"
-                            : "出口 IP: 获取中…"
+                            ? tr("出口 IP: 获取失败（节点可能已失效）", "Exit IP: unavailable (node may be down)")
+                            : tr("出口 IP: 获取中…", "Exit IP: fetching…")
                     }
                     if let nd = node {
                         let measurement = self.probes.rows.first { $0.name == nd.name }
-                        let title = measurement?.title ?? (nd.name == "MIMIO_CHAIN_EXIT" ? "链式代理" : nd.name)
+                        let title = measurement?.title ?? (nd.name == "MIMIO_CHAIN_EXIT" ? tr("链式代理", "Chain proxy") : nd.name)
                         let delay = measurement?.delay ?? nd.delay
-                        self.nodeItem.title = delay > 0 ? "当前节点: \(title) (\(delay)ms)" : "当前节点: \(title)"
+                        let note: String
+                        if nd.name == "MIMIO_CHAIN_EXIT" { note = "" }
+                        else if let fixed = nd.fixed { note = fixed == nd.name ? "" : tr("（所选节点不可用，临时使用）", " (selected node unavailable, using this)") }
+                        else { note = tr("（自动）", " (auto)") }
+                        let label = tr("当前节点: ", "Current node: ") + title + note
+                        self.nodeItem.title = delay > 0 ? "\(label) (\(delay)ms)" : label
                     } else {
-                        self.nodeItem.title = "当前节点: —"
+                        self.nodeItem.title = tr("当前节点: —", "Current node: —")
                     }
                 } else {
-                    self.exitIPItem.title = "出口 IP: —（内核未运行）"
-                    self.nodeItem.title = "当前节点: —"
+                    self.exitIPItem.title = tr("出口 IP: —（内核未运行）", "Exit IP: — (core not running)")
+                    self.nodeItem.title = tr("当前节点: —", "Current node: —")
                 }
 
                 if !isRunning && proxyAny {
-                    self.sysProxyItem.title = "系统代理: 残留（内核已停）"
+                    self.sysProxyItem.title = tr("系统代理: 残留（内核已停）", "System proxy: left on (core stopped)")
                     self.sysProxyItem.state = .on
                 } else if proxyAny {
-                    self.sysProxyItem.title = "系统代理: 已开启 ✓"
+                    self.sysProxyItem.title = tr("系统代理: 已开启 ✓", "System proxy: on ✓")
                     self.sysProxyItem.state = .on
                 } else {
-                    self.sysProxyItem.title = "系统代理: 未开启（浏览器不会走代理）"
+                    self.sysProxyItem.title = tr("系统代理: 未开启（浏览器不会走代理）", "System proxy: off (browsers bypass proxy)")
                     self.sysProxyItem.state = .off
                 }
 
@@ -410,15 +457,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         nodeNames = []
         let measurements = probes.rows.filter { $0.name != "MIMIO_CHAIN_EXIT" }
         let names = measurements.isEmpty ? cachedNodeProxies.compactMap { $0["name"] as? String } : measurements.map(\.name)
-        nodeListLabel.title = "订阅节点（\(names.count) 个）"
-        nodePickerItem.title = "选择节点（\(names.count)）"
+        nodeListLabel.title = tr("订阅节点（\(names.count) 个）", "Subscription nodes (\(names.count))")
+        nodePickerItem.title = tr("选择节点（\(names.count)）", "Select Node (\(names.count))")
+        let chained = autoNodeName == "MIMIO_CHAIN_EXIT" || currentNodeName == "MIMIO_CHAIN_EXIT"
+        let autoItem = NSMenuItem(title: tr("自动选择（最快）", "Auto (fastest)") + (autoNodeName.map { chained ? "" : " → \($0)" } ?? ""),
+                                  action: #selector(pickAuto), keyEquivalent: "")
+        autoItem.target = self
+        autoItem.state = autoNodeName != nil && !chained ? .on : .off
+        nodesMenu.addItem(autoItem)
         for name in names {
             let result = measurements.first { $0.name == name }
             let suffix = result?.delay.map { "  ·  \($0) ms" } ?? ""
             let item = NSMenuItem(title: name + suffix, action: #selector(pickNode(_:)), keyEquivalent: "")
             item.image = probeIcon(result?.visibleIndicator ?? .unknown)
-            item.toolTip = (result?.visibleIndicator.title ?? "未检测") + " · 下载：" + (result?.speedText ?? "未测速")
+            item.toolTip = (result?.visibleIndicator.title ?? tr("未检测", "Not tested")) + tr(" · 下载：", " · Download: ") + (result?.speedText ?? tr("未测速", "Not measured"))
             item.target = self; item.representedObject = name
+            item.state = name == currentNodeName ? .on : .off
             item.isEnabled = true
             nodesMenu.addItem(item); nodeNames.append(name)
         }
@@ -427,7 +481,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         nodesMenu.addItem(probeStatusItem)
     }
 
+    func probeStatusTitle() -> String {
+        if probes.checking { return tr("节点检测中…", "Testing nodes…") }
+        let minutes = Int(NodeProbeCoordinator.interval / 60)
+        return tr("节点自动检测：每 \(minutes) 分钟", "Auto test: every \(minutes) min")
+    }
+
     // MARK: 动作
+
+    @objc func changeLanguage(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let language = AppLanguage(rawValue: raw),
+              language != AppLanguage.current else { return }
+        AppLanguage.current = language
+        // 测速和升级窗口会复用，关闭后下次按新语言重建；分流、链式窗口每次打开都会新建。
+        probeWindow?.close(); probeWindow = nil
+        upgradeWindow?.close(); upgradeWindow = nil
+        buildMenu()
+        lastUpgradeBadge = nil; updateUpgradeBadge()
+        probes.onChange?()
+        refresh()
+    }
 
     @objc func showNodeSpeed() {
         if probeWindow == nil { probeWindow = NodeProbeWindowController(probes: probes) }
@@ -448,20 +521,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             controller.onSaving = { [weak self] saving in self?.busy = saving; if !saving { self?.refresh() } }
             routingWindow = controller
             controller.present()
-        } catch { showResult(title: "无法打开分流设置", text: error.localizedDescription) }
+        } catch { showResult(title: tr("无法打开分流设置", "Could not open routing rules"), text: error.localizedDescription) }
     }
 
     @objc func showAbout() {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "未知"
-        let appInfo = "应用版本：\(version)（构建 \(build)）"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? tr("未知", "unknown")
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? tr("未知", "unknown")
+        let appInfo = tr("应用版本：\(version)（构建 \(build)）", "App version: \(version) (build \(build))")
 
         // 直接查询已安装的内核，服务停止时也能查看版本；后台读取避免卡住菜单。
         DispatchQueue.global(qos: .utility).async {
             let binary = "\(CFG_DIR)/mihomo"
             let kernelVersion: String
             if !FileManager.default.isExecutableFile(atPath: binary) {
-                kernelVersion = "未安装"
+                kernelVersion = tr("未安装", "not installed")
             } else {
                 let result = run(binary, ["-v"], timeout: 5)
                 let tokens = result.out.split(whereSeparator: { $0.isWhitespace })
@@ -469,11 +542,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                    let version = tokens.first(where: { $0.hasPrefix("v") && $0.dropFirst().first?.isNumber == true }) {
                     kernelVersion = "mihomo \(version)"
                 } else {
-                    kernelVersion = result.status == -2 ? "读取超时" : "无法读取"
+                    kernelVersion = result.status == -2 ? tr("读取超时", "timed out") : tr("无法读取", "unreadable")
                 }
             }
             DispatchQueue.main.async {
-                self.showResult(title: "关于 Amyfree", text: "\(appInfo)\n内核版本：\(kernelVersion)")
+                self.showResult(title: tr("关于 Amyfree", "About Amyfree"), text: appInfo + tr("\n内核版本：", "\nCore version: ") + kernelVersion)
             }
         }
     }
@@ -484,7 +557,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if probes.chain["enabled"] as? Bool == true { showChainSettings(); return }
         busy = true
         DispatchQueue.global().async {
+            // 分流规则走 PROXY（自动测速组），固定它才能让所选节点真正承载流量；手动选择组同步，供"代理 · 手动选择"规则使用
+            _ = run("/bin/bash", [CTL, "use", "PROXY", name])
             _ = run("/bin/bash", [CTL, "use", "手动选择", name])
+            DispatchQueue.main.async { self.busy = false; self.refresh() }
+        }
+    }
+
+    /// 解除 PROXY 组的固定，恢复按延迟自动选择最快节点
+    @objc func pickAuto() {
+        guard isRunning else { return }
+        if probes.chain["enabled"] as? Bool == true { showChainSettings(); return }
+        busy = true
+        DispatchQueue.global().async {
+            httpSend("DELETE", "http://\(API)/proxies/PROXY")
             DispatchQueue.main.async { self.busy = false; self.refresh() }
         }
     }
@@ -492,7 +578,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func toggleProxy() {
         busy = true
         let running = isRunning
-        statusItem.button?.title = running ? " 停止中…" : " 启动中…"
+        statusItem.button?.title = running ? tr(" 停止中…", " Stopping…") : tr(" 启动中…", " Starting…")
         DispatchQueue.global().async {
             if running {
                 // 关代理：先把系统代理撤掉，避免浏览器指向一个已停的端口
@@ -505,9 +591,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     let p = run("/bin/bash", ["\(CFG_DIR)/proxyctl.sh", "on"])
                     if p.status != 0 {
                         DispatchQueue.main.async {
-                            self.showResult(title: "系统代理设置失败",
-                                text: "代理内核已启动，但系统代理未能开启，浏览器仍会直连。\n\n"
-                                    + "可尝试手动执行：\n  \(CFG_DIR)/proxyctl.sh on\n\n\(p.out)")
+                            self.showResult(title: tr("系统代理设置失败", "Could not set system proxy"),
+                                text: tr("代理内核已启动，但系统代理未能开启，浏览器仍会直连。\n\n可尝试手动执行：",
+                                         "The proxy core started, but the system proxy could not be enabled, so browsers still connect directly.\n\nTry running manually:")
+                                    + "\n  \(CFG_DIR)/proxyctl.sh on\n\n\(p.out)")
                         }
                     }
                 }
@@ -520,40 +607,40 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func toggleSystemProxy() {
         busy = true
         let on = systemProxyAnyOn()
-        statusItem.button?.title = on ? " 撤销系统代理…" : " 设置系统代理…"
+        statusItem.button?.title = on ? tr(" 撤销系统代理…", " Clearing system proxy…") : tr(" 设置系统代理…", " Setting system proxy…")
         DispatchQueue.global().async {
             let r = run("/bin/bash", ["\(CFG_DIR)/proxyctl.sh", on ? "off" : "on"])
             DispatchQueue.main.async {
                 self.busy = false
                 self.refresh()
-                if r.status != 0 { self.showResult(title: "系统代理操作结果", text: r.out) }
+                if r.status != 0 { self.showResult(title: tr("系统代理操作结果", "System Proxy"), text: r.out) }
             }
         }
     }
 
     @objc func doVerify() {
         busy = true
-        statusItem.button?.title = " 验证中…"
+        statusItem.button?.title = tr(" 验证中…", " Verifying…")
         DispatchQueue.global().async {
             let r = run("/bin/bash", ["\(CFG_DIR)/verify_node.sh", "7890", API, apiSecret(), "手动选择"])
             DispatchQueue.main.async {
                 self.busy = false
                 self.refresh()
-                self.showResult(title: "节点验证结果", text: r.out)
+                self.showResult(title: tr("节点验证结果", "Node Verification"), text: r.out)
             }
         }
     }
 
     @objc func doRefreshSub() {
         busy = true
-        statusItem.button?.title = " 更新订阅…"
+        statusItem.button?.title = tr(" 更新订阅…", " Updating…")
         DispatchQueue.global().async {
             let r = run("/bin/bash", [CTL, "refresh"], timeout: 180)
             let msg = r.out
             DispatchQueue.main.async {
                 self.busy = false
                 self.refresh()
-                self.showResult(title: "更新订阅", text: msg)
+                self.showResult(title: tr("更新订阅", "Update Subscription"), text: msg)
             }
         }
     }
@@ -569,12 +656,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let current = currentSubURL()
 
         let alert = NSAlert()
-        alert.messageText = "修改订阅地址"
-        alert.informativeText = "支持 base64 编码的原始链接订阅，也支持 Clash/YAML 格式。"
-            + "\n保存后会自动重新拉取节点并重启代理。"
-        alert.addButton(withTitle: "保存并更新")   // .alertFirstButtonReturn
-        alert.addButton(withTitle: "仅测试")       // .alertSecondButtonReturn
-        alert.addButton(withTitle: "取消")         // .alertThirdButtonReturn
+        alert.messageText = tr("修改订阅地址", "Edit Subscription URL")
+        alert.informativeText = tr("支持 base64 编码的原始链接订阅，也支持 Clash/YAML 格式。\n保存后会自动重新拉取节点并重启代理。",
+                                   "Supports base64-encoded link subscriptions and Clash YAML.\nSaving re-fetches the nodes and restarts the proxy.")
+        alert.addButton(withTitle: tr("保存并更新", "Save & Update"))   // .alertFirstButtonReturn
+        alert.addButton(withTitle: tr("仅测试", "Test Only"))          // .alertSecondButtonReturn
+        alert.addButton(withTitle: tr("取消", "Cancel"))               // .alertThirdButtonReturn
 
         // 输入框
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 440, height: 24))
@@ -594,23 +681,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // 校验
         guard !input.isEmpty else {
-            showResult(title: "订阅地址为空", text: "没有输入任何内容，未做修改。")
+            showResult(title: tr("订阅地址为空", "Empty subscription URL"), text: tr("没有输入任何内容，未做修改。", "Nothing was entered; no changes made."))
             return
         }
         guard input.hasPrefix("http://") || input.hasPrefix("https://") else {
-            showResult(title: "格式不正确", text: "订阅地址必须以 http:// 或 https:// 开头。")
+            showResult(title: tr("格式不正确", "Invalid format"), text: tr("订阅地址必须以 http:// 或 https:// 开头。", "The subscription URL must start with http:// or https://."))
             return
         }
 
         let isTestOnly = (resp == .alertSecondButtonReturn)
 
         busy = true
-        statusItem.button?.title = isTestOnly ? " 测试订阅…" : " 更新订阅…"
+        statusItem.button?.title = isTestOnly ? tr(" 测试订阅…", " Testing…") : tr(" 更新订阅…", " Updating…")
 
         DispatchQueue.global().async {
             let args = isTestOnly ? [CTL, "test", input] : [CTL, "sub", input]
             let result = run("/bin/bash", args, timeout: 180)
-            let title = isTestOnly ? "订阅测试结果" : result.status == 0 ? "订阅更新成功" : "订阅更新失败"
+            let title = isTestOnly ? tr("订阅测试结果", "Subscription Test") : result.status == 0 ? tr("订阅更新成功", "Subscription Updated") : tr("订阅更新失败", "Subscription Update Failed")
             DispatchQueue.main.async {
                 self.busy = false
                 self.refresh()
@@ -623,21 +710,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let enabling = !tunEnabled()
         if enabling {
             let alert = NSAlert()
-            alert.messageText = "开启 TUN 全局接管需要管理员权限"
-            alert.informativeText = "开启后所有 App 的流量都会被接管。系统会弹出密码框。"
-            alert.addButton(withTitle: "继续")
-            alert.addButton(withTitle: "取消")
+            alert.messageText = tr("开启 TUN 全局接管需要管理员权限", "TUN mode needs administrator rights")
+            alert.informativeText = tr("开启后所有 App 的流量都会被接管。系统会弹出密码框。", "All app traffic will go through the proxy. macOS will ask for your password.")
+            alert.addButton(withTitle: tr("继续", "Continue"))
+            alert.addButton(withTitle: tr("取消", "Cancel"))
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
         busy = true
         DispatchQueue.global().async {
             // 用 osascript 提权执行 tun.sh
-            let cmd = "do shell script \"/bin/bash '\(CFG_DIR)/tun.sh' \(enabling ? "on" : "off")\" with administrator privileges"
+            // 提权后的 shell 不继承本进程环境，语言需显式传入
+            let cmd = "do shell script \"AMYFREE_LANG=\(AppLanguage.current.rawValue) /bin/bash '\(CFG_DIR)/tun.sh' \(enabling ? "on" : "off")\" with administrator privileges"
             let r = run("/usr/bin/osascript", ["-e", cmd], timeout: 60)
             DispatchQueue.main.async {
                 self.busy = false
                 self.refresh()
-                if r.status != 0 { self.showResult(title: "TUN 操作结果", text: r.out) }
+                if r.status != 0 { self.showResult(title: tr("TUN 操作结果", "TUN Mode"), text: r.out) }
             }
         }
     }
@@ -648,7 +736,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let enabling = loginStartup.state != .enabled
         busy = true
         loginItem.isEnabled = false
-        loginItem.title = "正在\(enabling ? "开启" : "关闭")自启…"
+        loginItem.title = enabling ? tr("正在开启自启…", "Enabling launch at login…") : tr("正在关闭自启…", "Disabling launch at login…")
         DispatchQueue.global().async {
             let result = Result { try self.loginStartup.setEnabled(enabling) }
             DispatchQueue.main.async {
@@ -657,9 +745,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 switch result {
                 case .success(.requiresApproval): self.showLoginApproval()
                 case .success:
-                    self.showResult(title: enabling ? "已开启开机自启" : "已关闭开机自启",
-                                    text: enabling ? "Amyfree 会在你登录 macOS 后自动启动。" : "Amyfree 不再随登录自动启动，当前应用继续运行。")
-                case .failure(let error): self.showResult(title: "自启设置失败", text: error.localizedDescription)
+                    self.showResult(title: enabling ? tr("已开启开机自启", "Launch at login enabled") : tr("已关闭开机自启", "Launch at login disabled"),
+                                    text: enabling ? tr("Amyfree 会在你登录 macOS 后自动启动。", "Amyfree will start automatically when you log in to macOS.")
+                                                   : tr("Amyfree 不再随登录自动启动，当前应用继续运行。", "Amyfree will no longer start at login; the running app keeps running."))
+                case .failure(let error): self.showResult(title: tr("自启设置失败", "Launch at login failed"), text: error.localizedDescription)
                 }
             }
         }
@@ -667,17 +756,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func showLoginApproval() {
         let alert = NSAlert()
-        alert.messageText = "开机自启需要系统允许"
-        alert.informativeText = "macOS 已登记 Amyfree，但尚未允许它随登录启动。请在「系统设置 → 通用 → 登录项」中允许 Amyfree。"
-        alert.addButton(withTitle: "打开系统设置")
-        alert.addButton(withTitle: "稍后")
-        alert.addButton(withTitle: "取消自启")
+        alert.messageText = tr("开机自启需要系统允许", "Launch at login needs approval")
+        alert.informativeText = tr("macOS 已登记 Amyfree，但尚未允许它随登录启动。请在「系统设置 → 通用 → 登录项」中允许 Amyfree。",
+                                   "macOS registered Amyfree but hasn't allowed it to start at login. Allow Amyfree in System Settings → General → Login Items.")
+        alert.addButton(withTitle: tr("打开系统设置", "Open System Settings"))
+        alert.addButton(withTitle: tr("稍后", "Later"))
+        alert.addButton(withTitle: tr("取消自启", "Turn Off"))
         NSApp.activate(ignoringOtherApps: true)
         let response = alert.runModal()
         if response == .alertFirstButtonReturn { SMAppService.openSystemSettingsLoginItems() }
         else if response == .alertThirdButtonReturn {
             do { try loginStartup.setEnabled(false); refresh() }
-            catch { showResult(title: "自启设置失败", text: error.localizedDescription) }
+            catch { showResult(title: tr("自启设置失败", "Launch at login failed"), text: error.localizedDescription) }
         }
     }
 
@@ -685,7 +775,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let script = """
         tell application "Terminal"
             activate
-            do script "cd \(CFG_DIR) && export https_proxy=\(PROXY_URL) http_proxy=\(PROXY_URL) all_proxy=socks5://127.0.0.1:7890 no_proxy='localhost,127.0.0.1,::1,*.local,192.168.0.0/16,10.0.0.0/8' && echo '已配置代理环境变量:' && env | grep -i proxy"
+            do script "cd \(CFG_DIR) && export https_proxy=\(PROXY_URL) http_proxy=\(PROXY_URL) all_proxy=socks5://127.0.0.1:7890 no_proxy='localhost,127.0.0.1,::1,*.local,192.168.0.0/16,10.0.0.0/8' && echo '\(tr("已配置代理环境变量:", "Proxy environment variables set:"))' && env | grep -i proxy"
         end tell
         """
         run("/usr/bin/osascript", ["-e", script])
@@ -694,7 +784,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func openLog() {
         _ = run("/usr/bin/open", ["-a", "Console", "\(CFG_DIR)/mihomo.log"])
         if !FileManager.default.fileExists(atPath: "\(CFG_DIR)/mihomo.log") {
-            showResult(title: "日志", text: "日志文件尚未生成（服务可能还没启动过）。")
+            showResult(title: tr("日志", "Log"), text: tr("日志文件尚未生成（服务可能还没启动过）。", "No log file yet (the core may never have started)."))
         }
     }
 
@@ -746,17 +836,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard lastUpgradeBadge != available else { return }
         lastUpgradeBadge = available
         upgradeBadge?.isHidden = !available
-        upgradeItem?.title = available ? "升级中心 · 有可用更新…" : "升级中心…"
-        upgradeItem?.image = available ? NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "有可用更新")?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.systemRed])) : nil
+        upgradeItem?.title = available ? tr("升级中心 · 有可用更新…", "Upgrade Center · Update Available…") : tr("升级中心…", "Upgrade Center…")
+        upgradeItem?.image = available ? NSImage(systemSymbolName: "circle.fill", accessibilityDescription: tr("有可用更新", "Update available"))?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.systemRed])) : nil
         upgradeItem?.image?.isTemplate = false
-        statusItem?.button?.toolTip = available ? "Amyfree · 有可用更新，打开升级中心" : "Amyfree"
+        statusItem?.button?.toolTip = available ? tr("Amyfree · 有可用更新，打开升级中心", "Amyfree · Update available — open the Upgrade Center") : "Amyfree"
     }
 
     func showResult(title: String, text: String) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = String(text.suffix(2500))
-        alert.addButton(withTitle: "好")
+        alert.addButton(withTitle: tr("好", "OK"))
         // 让弹窗浮到最前
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
@@ -794,9 +884,9 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-upgrade-center"), 
 if CommandLine.arguments.contains("--prepare-runtime") {
     do {
         guard try AppRuntime.prepare(directory: CFG_DIR) || FileManager.default.isExecutableFile(atPath: CTL) else {
-            throw RuntimeInstallError(message: "此构建未包含运行组件。")
+            throw RuntimeInstallError(message: tr("此构建未包含运行组件。", "This build does not include runtime components."))
         }
-        print("运行组件已就绪")
+        print(tr("运行组件已就绪", "Runtime components ready"))
         exit(0)
     } catch { fputs("\(error.localizedDescription)\n", stderr); exit(1) }
 }

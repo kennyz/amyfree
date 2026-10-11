@@ -24,15 +24,15 @@ final class LocalNodeProbeBackend: NodeProbeBackend {
         task.standardOutput = output
         task.standardError = FileHandle.nullDevice
         lock.lock()
-        if cancelled { lock.unlock(); throw RoutingError("检测已取消") }
+        if cancelled { lock.unlock(); throw RoutingError(tr("检测已取消", "Test cancelled")) }
         process = task
-        do { try task.run() } catch { process = nil; lock.unlock(); throw RoutingError("测速组件无法启动，请重新安装 Amyfree。") }
+        do { try task.run() } catch { process = nil; lock.unlock(); throw RoutingError(tr("测速组件无法启动，请重新安装 Amyfree。", "The speed test component could not start. Please reinstall Amyfree.")) }
         lock.unlock()
         let data = output.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
         lock.lock(); process = nil; lock.unlock()
-        guard var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { throw RoutingError("无法读取节点检测结果。") }
-        if task.terminationStatus != 0 { throw RoutingError(object["error"] as? String ?? "节点检测失败。") }
+        guard var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { throw RoutingError(tr("无法读取节点检测结果。", "Could not read node test results.")) }
+        if task.terminationStatus != 0 { throw RoutingError(object["error"] as? String ?? tr("节点检测失败。", "Node test failed.")) }
         object["fingerprint"] = initial
         return object
     }

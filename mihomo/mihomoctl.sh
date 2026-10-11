@@ -25,11 +25,13 @@ AUTH=()
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 grn() { printf '\033[32m%s\033[0m\n' "$*"; }
 ylw() { printf '\033[33m%s\033[0m\n' "$*"; }
+# 提示语言：AMYFREE_LANG=en 输出英文，默认中文（菜单栏 App 按界面语言传入）
+t() { if [ "${AMYFREE_LANG:-zh}" = "en" ]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 
 need_sub() {
   if [ ! -s "$SUB_FILE" ]; then
-    red "✗ 还没有设置订阅地址。"
-    echo "   执行: $0 sub '你的订阅链接'"
+    red "$(t '✗ 还没有设置订阅地址。' '✗ No subscription URL set.')"
+    echo "   $(t '执行' 'Run'): $0 sub '$(t '你的订阅链接' 'your-subscription-url')'"
     return 1
   fi
   return 0
@@ -38,7 +40,8 @@ need_sub() {
 is_running() {
   [ -f "$PIDFILE" ] || return 1
   local p; p="$(cat "$PIDFILE" 2>/dev/null)"
-  [ -n "$p" ] && kill -0 "$p" 2>/dev/null
+  # TUN 模式下内核以 root 运行，kill -0 无权限，用 ps 判断进程是否存在
+  [ -n "$p" ] && ps -p "$p" >/dev/null 2>&1
 }
 
 # 拉取订阅并转换成 mihomo 可读的 Clash 格式
@@ -47,7 +50,7 @@ refresh_nodes() {
 }
 
 start() {
-  if is_running; then ylw "• 已在运行 (pid $(cat "$PIDFILE"))"; return 0; fi
+  if is_running; then ylw "• $(t '已在运行' 'Already running') (pid $(cat "$PIDFILE"))"; return 0; fi
   need_sub || return 1
   # 没有节点文件就先拉一次
   if [ ! -s "$NODES_FILE" ]; then
@@ -70,13 +73,13 @@ start() {
     fi
   done
   if [ -n "$busy" ]; then
-    red "✗ 端口被占用:$busy"
-    echo "  可能是另一个 mihomo 实例在运行："
+    red "✗ $(t '端口被占用' 'Port in use'):${busy}"
+    echo "  $(t '可能是另一个 mihomo 实例在运行：' 'Another mihomo instance may be running:')"
     lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | grep -E ":(7890|9090) " | sed 's/^/    /'
     echo
-    echo "  处理方式："
-    echo "    · 停掉旧实例：$0 stop      （或检查 ~/.config/mihomo 是否也在跑）"
-    echo "    · 或用其它端口：修改 config.yaml 的 mixed-port / external-controller"
+    echo "  $(t '处理方式：' 'To fix:')"
+    echo "    · $(t '停掉旧实例：' 'Stop the old instance: ')${0} stop      $(t '（或检查 ~/.config/mihomo 是否也在跑）' '(or check whether ~/.config/mihomo is also running)')"
+    echo "    · $(t '或用其它端口：修改 config.yaml 的 mixed-port / external-controller' 'Or use other ports: change mixed-port / external-controller in config.yaml')"
     return 1
   fi
 
@@ -84,7 +87,7 @@ start() {
   chmod 600 "$LOGFILE"
   # 独立会话避免命令/父进程退出时，后台内核被一起回收。
   if ! python3 - "$BIN" "$DIR" "$LOGFILE" "$PIDFILE" <<'PY_START'
-import subprocess, sys
+import os, subprocess, sys
 binary, directory, logfile, pidfile = sys.argv[1:]
 process = None
 try:
@@ -94,44 +97,49 @@ try:
                                    stderr=subprocess.STDOUT, start_new_session=True)
     with open(pidfile, 'w') as file:
         file.write(str(process.pid))
+    os.chmod(pidfile, 0o644)
 except Exception:
     if process is not None:
         process.terminate()
     sys.exit(1)
 PY_START
   then
-    red "✗ 无法创建后台内核进程"
+    red "$(t '✗ 无法创建后台内核进程' '✗ Could not start the core process')"
     return 1
   fi
   sleep 4
   if is_running; then
-    grn "✓ 已启动 (pid $(cat "$PIDFILE"))"
-    echo "  HTTP/SOCKS5 代理: http://127.0.0.1:7890"
-    echo "  控制面板 API    : http://$APICTL"
+    grn "✓ $(t '已启动' 'Started') (pid $(cat "$PIDFILE"))"
+    echo "  $(t 'HTTP/SOCKS5 代理' 'HTTP/SOCKS5 proxy'): http://127.0.0.1:7890"
+    echo "  $(t '控制面板 API    ' 'Controller API   '): http://$APICTL"
   else
-    red "✗ 启动失败，日志尾部："; tail -15 "$LOGFILE"; rm -f "$PIDFILE"; return 1
+    red "$(t '✗ 启动失败，日志尾部：' '✗ Start failed. End of log:')"; tail -15 "$LOGFILE"; rm -f "$PIDFILE"; return 1
   fi
 }
 
 stop() {
-  if ! is_running; then ylw "• 未在运行"; rm -f "$PIDFILE" "$DIR/.run-config.yaml"; return 0; fi
+  if ! is_running; then ylw "$(t '• 未在运行' '• Not running')"; rm -f "$PIDFILE" "$DIR/.run-config.yaml"; return 0; fi
   local p; p="$(cat "$PIDFILE")"
   kill "$p" 2>/dev/null
-  for _ in $(seq 1 20); do kill -0 "$p" 2>/dev/null || break; sleep 0.3; done
-  kill -0 "$p" 2>/dev/null && kill -9 "$p" 2>/dev/null
+  for _ in $(seq 1 20); do ps -p "$p" >/dev/null 2>&1 || break; sleep 0.3; done
+  ps -p "$p" >/dev/null 2>&1 && kill -9 "$p" 2>/dev/null
+  if ps -p "$p" >/dev/null 2>&1; then
+    red "$(t "✗ 无权限停止内核 (pid ${p}，TUN 模式下以 root 运行)，请先关闭 TUN" "✗ No permission to stop the core (pid ${p} runs as root in TUN mode). Turn off TUN first.")"
+    return 1
+  fi
   rm -f "$PIDFILE" "$DIR/.run-config.yaml"
-  grn "✓ 已停止"
+  grn "$(t '✓ 已停止' '✓ Stopped')"
 }
 
 status() {
   if is_running; then
-    grn "✓ 运行中 (pid $(cat "$PIDFILE"))"
+    grn "✓ $(t '运行中' 'Running') (pid $(cat "$PIDFILE"))"
     curl -s "${AUTH[@]}" --max-time 3 "http://$APICTL/version" 2>/dev/null | head -c 200; echo
   else
-    red "✗ 未运行"
+    red "$(t '✗ 未运行' '✗ Not running')"
   fi
-  echo "--- 端口监听 ---"
-  lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | grep -E ":(7890|9090|1053) " || echo "(无)"
+  echo "--- $(t '端口监听' 'Listening ports') ---"
+  lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | grep -E ":(7890|9090|1053) " || echo "$(t '(无)' '(none)')"
 }
 
 reload_sub() {
@@ -150,21 +158,21 @@ test_sub() {
 }
 
 nodes() {
-  is_running || { red "✗ 服务未运行"; return 1; }
+  is_running || { red "$(t '✗ 服务未运行' '✗ Service not running')"; return 1; }
   python3 "$DIR/nodes.py" "nodes" "$APICTL" "$(cat "$SECRET_FILE" 2>/dev/null)"
 }
 
 use_group() {
   local group="$1" node="$2"
-  [ -z "$group" ] && { red "用法: $0 use <组名> <节点名>"; return 1; }
+  [ -z "$group" ] && { red "$(t '用法' 'Usage'): $0 use <$(t '组名' 'group')> <$(t '节点名' 'node')>"; return 1; }
   curl -s "${AUTH[@]}" -X PUT --max-time 5 -H "Content-Type: application/json" \
     -d "{\"name\":\"$node\"}" "http://$APICTL/proxies/$group" >/dev/null 2>&1 \
-    && grn "✓ 已把 [$group] 切换到 $node" || red "✗ 切换失败"
+    && grn "✓ $(t "已把 [${group}] 切换到 ${node}" "Switched [${group}] to ${node}")" || red "$(t '✗ 切换失败' '✗ Switch failed')"
 }
 
 # 验证节点是否真实生效（出口 IP 必须变化）
 verify() {
-  is_running || { red "✗ 服务未运行"; return 1; }
+  is_running || { red "$(t '✗ 服务未运行' '✗ Service not running')"; return 1; }
   bash "$DIR/verify_node.sh" 7890 "$APICTL" "$(cat "$SECRET_FILE" 2>/dev/null)" "手动选择"
 }
 
@@ -189,11 +197,11 @@ case "${1:-}" in
   verify)  verify ;;
   sub)
     if [ -z "${2:-}" ]; then
-      if [ -s "$SUB_FILE" ]; then echo "当前订阅: $(cat "$SUB_FILE")"; else red "尚未设置订阅"; fi
+      if [ -s "$SUB_FILE" ]; then echo "$(t '当前订阅' 'Current subscription'): $(cat "$SUB_FILE")"; else red "$(t '尚未设置订阅' 'No subscription set')"; fi
     else
       case "$2" in
         http://*|https://*) ;;
-        *) red "✗ 订阅地址必须以 http:// 或 https:// 开头"; exit 1 ;;
+        *) red "$(t '✗ 订阅地址必须以 http:// 或 https:// 开头' '✗ The subscription URL must start with http:// or https://')"; exit 1 ;;
       esac
       python3 "$DIR/subscription.py" save "$2"
     fi ;;

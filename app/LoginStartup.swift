@@ -48,11 +48,11 @@ final class LoginStartupController {
             // 已登记/尚待允许时，系统可能返回错误；以读回状态为准。
             if enabled, state == .enabled || state == .requiresApproval { return state }
             if !enabled, state == .disabled { return .disabled }
-            throw LoginStartupError(message: "macOS 未能\(enabled ? "开启" : "关闭") Amyfree 的登录自启。\n\(error.localizedDescription)")
+            throw LoginStartupError(message: (enabled ? tr("macOS 未能开启 Amyfree 的登录自启。", "macOS could not enable launch at login for Amyfree.") : tr("macOS 未能关闭 Amyfree 的登录自启。", "macOS could not disable launch at login for Amyfree.")) + "\n" + error.localizedDescription)
         }
         let actual = state
         guard enabled ? [.enabled, .requiresApproval].contains(actual) : actual == .disabled else {
-            throw LoginStartupError(message: "系统尚未确认自启设置，请从已安装的 Amyfree.app 重试，或检查「系统设置 → 通用 → 登录项」。")
+            throw LoginStartupError(message: tr("系统尚未确认自启设置，请从已安装的 Amyfree.app 重试，或检查「系统设置 → 通用 → 登录项」。", "macOS hasn't confirmed the login setting. Retry from the installed Amyfree.app, or check System Settings → General → Login Items."))
         }
         return actual
     }

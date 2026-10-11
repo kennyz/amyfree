@@ -20,10 +20,10 @@ enum AppUpdater {
             payload = data; status = (response as? HTTPURLResponse)?.statusCode ?? 0; failure = error
             semaphore.signal()
         }.resume()
-        guard semaphore.wait(timeout: .now() + 30) == .success else { throw AppUpdateError(message: "检查更新超时，请稍后重试。") }
-        if failure != nil { throw AppUpdateError(message: "暂时无法连接 GitHub，请检查网络后重试。") }
+        guard semaphore.wait(timeout: .now() + 30) == .success else { throw AppUpdateError(message: tr("检查更新超时，请稍后重试。", "Update check timed out. Please try again later.")) }
+        if failure != nil { throw AppUpdateError(message: tr("暂时无法连接 GitHub，请检查网络后重试。", "Can't reach GitHub right now. Check your network and try again.")) }
         guard status == 200, let data = payload else {
-            throw AppUpdateError(message: status == 403 || status == 429 ? "GitHub 请求较多，请稍后重试。" : "更新服务暂时不可用，请稍后重试。")
+            throw AppUpdateError(message: status == 403 || status == 429 ? tr("GitHub 请求较多，请稍后重试。", "GitHub is rate-limiting requests. Please try again later.") : tr("更新服务暂时不可用，请稍后重试。", "The update service is unavailable. Please try again later."))
         }
         return try UpdateRelease.parse(data, currentVersion: currentVersion)
     }
@@ -32,7 +32,7 @@ enum AppUpdater {
         guard AppVersion(update.tag) != nil,
               let script = Bundle.main.resourceURL?.appendingPathComponent("install.sh"),
               FileManager.default.fileExists(atPath: script.path) else {
-            throw AppUpdateError(message: "请从 GitHub Release 安装正式版后使用在线更新。")
+            throw AppUpdateError(message: tr("请从 GitHub Release 安装正式版后使用在线更新。", "Install a release build from GitHub Releases to use online updates."))
         }
         var work: URL?, verifying = false
         let temporary = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true).resolvingSymlinksInPath()
@@ -47,18 +47,18 @@ enum AppUpdater {
         }, tick: {
             let bytes = work.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.appendingPathComponent("app.zip").path)[.size] as? NSNumber }?.int64Value ?? 0
             progress(UpgradeProgress(received: bytes, total: update.downloadSize,
-                                     phase: verifying ? "校验签名并准备安装…" : "正在下载…"))
+                                     phase: verifying ? tr("校验签名并准备安装…", "Verifying signature and preparing install…") : tr("正在下载…", "Downloading…")))
         })
         guard result.status == 0,
               let line = result.text.split(separator: "\n").last(where: { $0.hasPrefix("AMYFREE_STAGED=") }) else {
-            throw AppUpdateError(message: "下载或校验更新失败，当前版本继续可用。\n\(result.text.suffix(700))")
+            throw AppUpdateError(message: tr("下载或校验更新失败，当前版本继续可用。", "Downloading or verifying the update failed; the current version still works.") + "\n\(result.text.suffix(700))")
         }
         let path = String(line.dropFirst("AMYFREE_STAGED=".count))
         let directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
         guard directory.lastPathComponent.hasPrefix("amyfree-install."),
               directory.deletingLastPathComponent().resolvingSymlinksInPath() == temporary,
               FileManager.default.fileExists(atPath: directory.appendingPathComponent("install.sh").path) else {
-            throw AppUpdateError(message: "无法读取更新暂存文件，请重试。")
+            throw AppUpdateError(message: tr("无法读取更新暂存文件，请重试。", "Could not read the staged update. Please try again."))
         }
         return directory
     }
@@ -67,7 +67,7 @@ enum AppUpdater {
         let destination = Bundle.main.bundleURL
         guard destination.lastPathComponent == "Amyfree.app",
               FileManager.default.isWritableFile(atPath: destination.deletingLastPathComponent().path) else {
-            throw AppUpdateError(message: "应用所在目录不可写，请将 Amyfree 拖入 Applications 或 ~/Applications 后重试。")
+            throw AppUpdateError(message: tr("应用所在目录不可写，请将 Amyfree 拖入 Applications 或 ~/Applications 后重试。", "The app's folder isn't writable. Move Amyfree to Applications or ~/Applications and try again."))
         }
         let logDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs")
         try FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true)
