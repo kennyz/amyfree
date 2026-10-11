@@ -27,7 +27,7 @@ func pump(_ condition: () -> Bool) {
     while !condition() && Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
     expect(condition(), "asynchronous operation completed")
 }
-expect(NodeProbeCoordinator.interval == 30, "30 second interval")
+expect(NodeProbeCoordinator.interval == 180, "3 minute interval")
 expect(NodeIndicator.quality(delay: 80) == .good, "fast state")
 expect(NodeIndicator.quality(delay: 900) == .slow, "slow state")
 expect(NodeIndicator.quality(delay: 0) == .failed, "failed state")
