@@ -1,13 +1,12 @@
 #!/bin/bash
 # ============================================================
-# 编译并打包菜单栏 App（无需 Xcode 工程，直接 swiftc）
+# 编译并打包菜单栏 App（Rust + objc2，无需 Xcode 工程）
 #
 # 用法: bash scripts/build-app.sh
 # 产物: build/Amyfree.app
 #
-# 为什么不用 Xcode：这是纯 AppKit 单文件程序，swiftc 足够，
-# 且避免维护 .xcodeproj。若你更喜欢 Xcode，可自行新建工程
-# 并加入 app/main.swift。
+# 菜单栏在 app-rs/（Rust）；尚未迁移的窗口仍在 app/*.swift，
+# 由 app-rs/build.rs 调用 swiftc 编译成静态库链接进同一个可执行文件。
 # ============================================================
 set -euo pipefail
 
@@ -33,15 +32,13 @@ mkdir -p "$CACHE" "$OUT"
 
 echo
 echo "=== 编译 ==="
-swiftc -O "$APP_SRC"/*.swift -o "$OUT/Amyfree" \
-  -module-cache-path "$CACHE" \
-  -target arm64-apple-macosx13.0 \
-  -framework AppKit -framework ServiceManagement
+command -v cargo >/dev/null 2>&1 || { echo "✗ 未找到 cargo。请安装 Rust：https://rustup.rs"; exit 1; }
+cargo build --release --quiet --manifest-path "$REPO/Cargo.toml" -p amyfree-app
+cp "$REPO/target/release/Amyfree" "$OUT/Amyfree"
 echo "✓ 编译完成: $(du -h "$OUT/Amyfree" | cut -f1)"
 
 echo
 echo "=== 编译运行组件 amyfree-helper（Rust） ==="
-command -v cargo >/dev/null 2>&1 || { echo "✗ 未找到 cargo。请安装 Rust：https://rustup.rs"; exit 1; }
 cargo build --release --quiet --manifest-path "$REPO/Cargo.toml" -p amyfree-core --bin amyfree-helper
 cp "$REPO/target/release/amyfree-helper" "$OUT/amyfree-helper"
 echo "✓ amyfree-helper: $(du -h "$OUT/amyfree-helper" | cut -f1)"

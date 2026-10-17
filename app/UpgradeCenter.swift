@@ -293,11 +293,3 @@ final class UpgradeCenterWindowController: NSWindowController {
         coordinator.start(component)
     }
 }
-
-final class UpgradeBadgeView: NSView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.systemRed.setFill()
-        NSBezierPath(ovalIn: bounds).fill()
-    }
-}
