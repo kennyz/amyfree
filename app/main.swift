@@ -220,6 +220,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var sysProxyItem: NSMenuItem!
     var tunItem: NSMenuItem!
     var loginItem: NSMenuItem!
+    var speedItem: NSMenuItem!
+    var speedTimer: Timer?
+    var lastTraffic: (down: Int64, up: Int64, at: Date)?
+    var speedText: String?   // 菜单栏网速，如「↓1.2M ↑34K」；未开启监控时为 nil
     var nodeListLabel: NSMenuItem!
     var nodeSeparator: NSMenuItem!
     var nodeNames: [String] = []
@@ -345,6 +349,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sysProxyItem = action(tr("系统代理", "System Proxy"), #selector(toggleSystemProxy), "s")
         tunItem = action(tr("TUN 全局接管", "TUN Mode (All Traffic)"), #selector(toggleTun))
         loginItem = action(tr("开机自启（Amyfree）", "Launch at Login (Amyfree)"), #selector(toggleLogin))
+        speedItem = action(tr("菜单栏显示网速", "Show Speed in Menu Bar"), #selector(toggleSpeedMonitor))
+        speedItem.state = speedMonitorEnabled ? .on : .off
         chainItem = action(tr("链式代理…", "Chain Proxy…"), #selector(showChainSettings))
         let languageItems = AppLanguage.allCases.map { language -> NSMenuItem in
             let item = action(language.title, #selector(changeLanguage(_:)))
@@ -353,7 +359,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return item
         }
         menu.addItem(submenu(tr("设置", "Settings"), [sysProxyItem, action(tr("分流设置…", "Routing Rules…"), #selector(showRoutingRules), ","),
-                                       chainItem, .separator(), tunItem, loginItem, .separator(),
+                                       chainItem, .separator(), tunItem, loginItem, speedItem, .separator(),
                                        submenu("Languages", languageItems)]))
         exitIPItem = NSMenuItem(title: tr("出口 IP：—", "Exit IP: —"), action: nil, keyEquivalent: "")
         exitIPItem.isEnabled = false
@@ -379,8 +385,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggleItem.title = running ? tr("关闭代理", "Disable Proxy") : tr("启用代理", "Enable Proxy")
 
         setStatusGlyph(awake: running)
+        updateSpeedMonitor()
         if running {
-            statusItem.button?.title = tr(" 开启", " On")
+            showRunningTitle()
             updateStatusLine()
         } else {
             statusItem.button?.title = tr(" 关闭", " Off")
@@ -468,6 +475,70 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         glyph.isTemplate = true
         glyph.accessibilityDescription = awake ? tr("Amyfree：代理已开启", "Amyfree: proxy on") : tr("Amyfree：代理已关闭", "Amyfree: proxy off")
         statusItem.button?.image = glyph
+    }
+
+    // MARK: 网速监控
+
+    static let speedMonitorKey = "AmyfreeSpeedMonitor"
+    var speedMonitorEnabled: Bool { UserDefaults.standard.bool(forKey: Self.speedMonitorKey) }
+
+    @objc func toggleSpeedMonitor() {
+        UserDefaults.standard.set(!speedMonitorEnabled, forKey: Self.speedMonitorKey)
+        speedItem.state = speedMonitorEnabled ? .on : .off
+        updateSpeedMonitor()
+        if !busy && isRunning { showRunningTitle() }
+    }
+
+    /// 开关打开且内核运行时每秒采样一次，否则停止并恢复「开启/关闭」文字
+    func updateSpeedMonitor() {
+        if speedMonitorEnabled && isRunning {
+            guard speedTimer == nil else { return }
+            speedText = Self.speedTitle(down: 0, up: 0)
+            speedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in self.sampleSpeed() }
+        } else {
+            speedTimer?.invalidate(); speedTimer = nil
+            lastTraffic = nil; speedText = nil
+        }
+    }
+
+    /// 内核 /connections 返回累计收发字节，相邻两次之差即为速率
+    func sampleSpeed() {
+        DispatchQueue.global(qos: .utility).async {
+            guard let json = httpGet("http://\(API)/connections", timeout: 2),
+                  let object = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
+                  let down = (object["downloadTotal"] as? NSNumber)?.int64Value,
+                  let up = (object["uploadTotal"] as? NSNumber)?.int64Value else { return }
+            let now = Date()
+            DispatchQueue.main.async {
+                guard self.speedTimer != nil else { return }
+                defer { self.lastTraffic = (down, up, now) }
+                // 首次采样或内核重启（计数归零）时只记录基线
+                guard let last = self.lastTraffic, down >= last.down, up >= last.up else { return }
+                let elapsed = max(now.timeIntervalSince(last.at), 0.5)
+                self.speedText = Self.speedTitle(down: Double(down - last.down) / elapsed, up: Double(up - last.up) / elapsed)
+                if !self.busy && isRunning { self.showRunningTitle() }
+            }
+        }
+    }
+
+    static func speedTitle(down: Double, up: Double) -> String {
+        func format(_ bytes: Double) -> String {
+            let kb = bytes / 1024
+            let text = kb < 1000 ? String(format: "%.0fK", kb) : kb < 1024 * 100 ? String(format: "%.1fM", kb / 1024) : String(format: "%.0fM", kb / 1024)
+            return text.padding(toLength: 5, withPad: " ", startingAt: 0)
+        }
+        // 数字紧贴箭头、右侧补空格到定长，网速变化时菜单栏图标不左右跳动
+        return " ↓\(format(down))↑\(format(up))"
+    }
+
+    /// 代理开启时的菜单栏文字：开启网速监控则显示网速（等宽字体，避免宽度跳动），否则显示「开启」
+    func showRunningTitle() {
+        guard let button = statusItem.button else { return }
+        if let text = speedText {
+            button.attributedTitle = NSAttributedString(string: text, attributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)])
+        } else {
+            button.title = tr(" 开启", " On")
+        }
     }
 
     /// 运行状态与当前节点合并为一行：「Amyfree：代理已开启 · 节点 (146ms)」
