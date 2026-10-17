@@ -18,7 +18,10 @@ with tempfile.TemporaryDirectory(prefix='amyfree-source-install-') as tmp:
     with archive.open('wb') as output:
         subprocess.run(['git', 'archive', 'HEAD'], cwd=repo, stdout=output, check=True)
     with tarfile.open(archive) as source:
-        source.extractall(checkout, filter='data')
+        try:
+            source.extractall(checkout, filter='data')
+        except TypeError:  # Python < 3.12 has no extraction filters; the archive is our own HEAD.
+            source.extractall(checkout)
     for name in ['install-source-runtime.sh', 'install-menubar.sh', 'fetch-deps.sh', 'refresh-geodata.sh']:
         shutil.copyfile(repo / 'scripts' / name, checkout / 'scripts' / name)
     (checkout / 'build').mkdir()
