@@ -8,6 +8,8 @@
 # 用法: sudo ./tun.sh on        切换到 TUN 全局接管
 #       sudo ./tun.sh off       关闭 TUN
 #       sudo ./tun.sh status    查看当前状态
+#       sudo ./tun.sh start     以 root 启动内核（TUN 已开启时由菜单「启用代理」调用）
+#       sudo ./tun.sh stop      停止以 root 运行的内核（普通用户无权停止）
 # ============================================================
 set -uo pipefail
 
@@ -75,8 +77,22 @@ case "${1:-status}" in
     else
       echo "$(t '• 无备份可还原（可能本就未开启）' '• No backup to restore (TUN was probably off)')"
     fi
-    sudo -u "${SUDO_USER:-root}" env AMYFREE_LANG="${AMYFREE_LANG:-zh}" "$DIR/mihomoctl.sh" restart 2>/dev/null || true
+    # 先以 root 停掉 TUN 内核，再以目录所有者身份启动：否则内核仍以 root 运行，
+    # 之后菜单以普通用户身份无法关闭代理。（经 osascript 提权时没有 SUDO_USER。）
+    was_running=0
+    [ -f "$PIDFILE" ] && ps -p "$(cat "$PIDFILE" 2>/dev/null)" >/dev/null 2>&1 && was_running=1
+    env AMYFREE_LANG="${AMYFREE_LANG:-zh}" "$DIR/mihomoctl.sh" stop >/dev/null 2>&1 || true
     give_back
+    if [ "$was_running" = 1 ]; then
+      sudo -u "$OWNER" env AMYFREE_LANG="${AMYFREE_LANG:-zh}" "$DIR/mihomoctl.sh" start 2>/dev/null || true
+    fi
+    ;;
+  start|stop)
+    # TUN 内核以 root 运行，普通用户无法启停；菜单经管理员授权调用这里。
+    env AMYFREE_LANG="${AMYFREE_LANG:-zh}" "$DIR/mihomoctl.sh" "$1"
+    rc=$?
+    give_back
+    exit $rc
     ;;
   status)
     if grep -qE '^tun:' "$CFG" 2>/dev/null; then
@@ -91,5 +107,5 @@ case "${1:-status}" in
     fi
     ;;
   *)
-    sed -n '2,12p' "$0"; exit 1 ;;
+    sed -n '2,14p' "$0"; exit 1 ;;
 esac

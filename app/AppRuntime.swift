@@ -9,7 +9,7 @@ struct RuntimeInstallError: LocalizedError {
 enum AppRuntime {
     static let files = ["mihomoctl.sh", "proxyctl.sh", "tun.sh", "verify_node.sh",
                         "parse_sub.py", "subscription.py", "node_speed.py", "chain_proxy.py",
-                        "cert_probe.py", "nodes.py", "geodata_update.py", "refresh-geodata.sh", "config.template.yaml",
+                        "cert_probe.py", "node_manager.py", "nodes.py", "geodata_update.py", "refresh-geodata.sh", "config.template.yaml",
                         "geoip.dat", "geosite.dat", "country.mmdb"]
 
     static var python: String {
@@ -46,9 +46,10 @@ enum AppRuntime {
         func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         var launcher = "#!/bin/bash\nexport PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1\nunset PYTHONHOME PYTHONPATH\n"
         if let certificates = environment["SSL_CERT_FILE"] {
-            launcher += "export SSL_CERT_FILE=\(quote(certificates))\n"
+            launcher += "[ ! -f \(quote(certificates)) ] || export SSL_CERT_FILE=\(quote(certificates))\n"
         }
-        launcher += "exec \(quote(python)) \"$@\"\n"
+        // 应用被移走或换成不带 Python 的源码构建时，退回系统 Python，避免内核无法启动
+        launcher += "[ ! -x \(quote(python)) ] || exec \(quote(python)) \"$@\"\nexec /usr/bin/python3 \"$@\"\n"
         let target = destination.appendingPathComponent("python3")
         if (try? String(contentsOf: target, encoding: .utf8)) != launcher {
             try launcher.write(to: target, atomically: true, encoding: .utf8)

@@ -8,6 +8,7 @@ geoip.dat
 geosite.dat
 country.mmdb
 **/providers/nodes.yaml
+**/providers/subscription.yaml
 
 # 构建产物
 build/
@@ -23,6 +24,7 @@ config.yaml
 .mimio-validate-*.yaml
 .config.yaml.notun
 .mimio-chain.json
+custom-nodes.json
 .proxy-state
 .mihomo.pid
 .amyfree-runtime-version

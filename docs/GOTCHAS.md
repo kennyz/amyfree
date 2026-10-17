@@ -1,139 +1,131 @@
-# Gotchas：踩过的坑与不可想当然的结论
+# Gotchas: Pitfalls and Non-Obvious Findings
 
-这个文件记录开发过程中**实际验证过**的非显然结论。每条都标注了证据，改动相关代码前请先读。
-
----
-
-## 1. DNS：`direct-nameserver` 缺了会死锁 ★最坑
-
-**症状**：内核启动后 provider 拉取失败，日志出现
-
-```
-initial proxy provider nodes error: Get "https://<订阅域名>": net/http: TLS handshake timeout
-[TCP] dial PROXY --> <订阅域名>:2096 error: dns resolve failed: context deadline exceeded
-```
-
-**根因**：开启 `respect-rules: true` 后，DNS 查询被当作普通流量走规则 → 解析「订阅/节点域名」需要先连上代理 → 而连代理又需要先解析域名。**鸡生蛋死锁**。
-
-**解决**：`dns.direct-nameserver` 必须配置，它专门负责在直连路径上解析这些域名。
-
-**验证过程**：
-- `respect-rules: false` + 纯 UDP `nameserver` → **仍然失败**
-- 只有加上 `direct-nameserver` 之后 provider 才成功下载
+This file records non-obvious conclusions that were **actually verified** during development. Each item notes its evidence. Read the relevant items before changing related code.
 
 ---
 
-## 2. 不要用 1.1.1.1 / 8.8.8.8 的 DoH
+## 1. DNS: a missing `direct-nameserver` causes a deadlock ★ the worst one
 
-**实测**：开发环境所在网络**丢弃这两个 IP 的 443 端口**。
+**Symptom:** after the core starts, the provider fails to download and the log shows
 
 ```
-curl https://1.1.1.1  → connection refused / 超时
+initial proxy provider nodes error: Get "https://<subscription domain>": net/http: TLS handshake timeout
+[TCP] dial PROXY --> <subscription domain>:2096 error: dns resolve failed: context deadline exceeded
 ```
 
-所以 `dns.fallback` 里写 `https://1.1.1.1/dns-query` 会导致 DNS 整体不可用（日志里表现为 `all DNS requests failed`）。
+**Root cause:** with `respect-rules: true`, DNS queries are treated as ordinary traffic and follow the rules. Resolving the subscription/node domains then requires a working proxy, while connecting to the proxy requires resolving those domains first. **A chicken-and-egg deadlock.**
 
-**改用**：纯 UDP 的国内 DNS（`223.5.5.5`、`119.29.29.29`、`114.114.114.114`）。
+**Fix:** `dns.direct-nameserver` must be set; it resolves these domains over the direct path.
+
+**How it was verified:**
+- `respect-rules: false` + plain UDP `nameserver` → **still failed**
+- The provider only downloaded successfully after adding `direct-nameserver`
 
 ---
 
-## 3. `respect-rules: true` 会把国内 DNS 也塞进代理
+## 2. Don't use DoH on 1.1.1.1 / 8.8.8.8
 
-**实测日志**：
+**Measured:** the development network **drops port 443 to these two IPs**.
+
+```
+curl https://1.1.1.1  → connection refused / timeout
+```
+
+So putting `https://1.1.1.1/dns-query` in `dns.fallback` makes DNS unusable as a whole (the log shows `all DNS requests failed`).
+
+**Use instead:** plain UDP domestic DNS (`223.5.5.5`, `119.29.29.29`, `114.114.114.114`).
+
+---
+
+## 3. `respect-rules: true` also pushes domestic DNS through the proxy
+
+**Log observed:**
 
 ```
 [TCP] dial PROXY (match GeoSite/geolocation-!cn) --> www.google.com:443
          error: dns resolve failed: requesting https://1.1.1.1:443/dns-query: context deadline exceeded
 ```
 
-开着 `respect-rules` 时，连 DNS 查询本身都按规则走代理，国内解析也会被绕进代理，反而更慢更容易超时。
+With `respect-rules` on, even the DNS queries themselves follow the rules through the proxy, so domestic lookups get routed through the proxy as well, making them slower and more likely to time out.
 
-**当前配置取 `false`**，并靠 `sniffer` 把真实域名还原出来交给节点远端解析。
+**The current config uses `false`**, and relies on the `sniffer` to recover the real domain name so the node resolves it remotely.
 
 ---
 
-## 4. `geo-auto-update` 必须为 false
+## 4. `geo-auto-update` must be false
 
-**实测**：工作目录缺少 `country.mmdb` 时，mihomo 会去 GitHub 下载并**无限期卡住**，表现为启动后长时间无响应，且没有任何超时提示。
+**Measured:** when `country.mmdb` is missing from the working directory, mihomo downloads it from GitHub and **hangs indefinitely**: after starting it stays unresponsive for a long time with no timeout message.
 
-**解决**：
+**Fix:**
 - `geo-auto-update: false`
-- 三个规则库文件（`geoip.dat` / `geosite.dat` / `country.mmdb`）**必须预置在工作目录**
-- 更新走 `scripts/refresh-geodata.sh`（jsDelivr 镜像）
+- The three rule data files (`geoip.dat` / `geosite.dat` / `country.mmdb`) **must be present in the working directory beforehand**
+- Updates go through `scripts/refresh-geodata.sh` (jsDelivr mirror)
 
 ---
 
-## 5. base64 订阅：mihomo 不能直读，必须先转换
+## 5. base64 subscriptions: mihomo can't read them directly; convert first
 
-**实测**：机场订阅返回的是
+**Measured:** the provider's subscription returns
 
 ```
-dmxlc3M6Ly8wMzljNzA1NS0...（整块 base64）
+dmxlc3M6Ly8wMzljNzA1NS0...(one big base64 block)
 ```
 
-解码后是 `vless://...` 原始链接列表。mihomo 的 `proxy-providers` **不支持**这种格式。
+which decodes to a list of raw `vless://...` links. mihomo's `proxy-providers` **does not support** this format.
 
-**解决**：`parse_sub.py` 负责「base64 解码 → 解析各协议 → 生成 Clash YAML」，然后以
-`type: file` 的 provider 加载 `providers/nodes.yaml`。
+**Fix:** `parse_sub.py` does "base64 decode → parse each protocol → write Clash YAML", and the result is loaded as `providers/nodes.yaml` through a `type: file` provider.
 
-**注意**：`proxy-providers` 的本地缓存**优先于**订阅 URL。所以换订阅后必须
-**删除 `providers/*.yaml` 并重启**，只做 API 热重载不会重新拉取订阅——这个坑实际导致过
-「换了订阅地址但仍在用旧节点」。
+**Note:** the local `proxy-providers` cache **takes priority over** the subscription URL. After changing the subscription you must **delete `providers/*.yaml` and restart**; an API hot reload alone does not re-fetch the subscription. This pitfall actually caused "changed the subscription URL but still on the old nodes".
 
 ---
 
-## 6. 一个假象：`ss://` 计数
+## 6. A false lead: counting `ss://`
 
-排查订阅格式时，用 `grep -c 'ss://'` 数出 1 个 ss 节点，但订阅里其实**没有** ss 节点。
+While investigating the subscription format, `grep -c 'ss://'` counted 1 ss node, but the subscription actually contained **no** ss nodes.
 
-**原因**：节点域名里恰好包含子串 `ss://`（例如 `exa**ss**le.example.com` 中的字符序列
-`ss` 紧跟后面的 `.example...` 被跨字段误匹配），因此 `contains` 判断会误报。
+**Why:** a node domain happened to contain the substring `ss://` (for example, in `exa**ss**le.example.com` the characters `ss` followed by the rest of the line matched across fields), so a `contains` check gives a false positive.
 
-**正确做法**：判断协议要用**行首匹配**（`line.startswith('ss://')`），不要用 `contains`。
-项目里的 `parse_sub.py` 用的是行首 `scheme://` 拆分，因此不受影响。
+**Correct approach:** detect protocols with a **line-start match** (`line.startswith('ss://')`), not `contains`. The project's `parse_sub.py` splits on a line-start `scheme://`, so it is not affected.
 
 ---
 
-## 7. `curl` 不读 macOS 系统代理
+## 7. `curl` does not read the macOS system proxy
 
-**实测**：用 `networksetup` 设好系统代理后，
+**Measured:** after setting the system proxy with `networksetup`,
 
 ```
-python3 urllib.getproxies()  → {'http': 'http://127.0.0.1:7890', 'https': ...}   ✓ 读到了
-curl https://www.google.com  → 超时（25s）                                        ✗ 没读到
+python3 urllib.getproxies()  → {'http': 'http://127.0.0.1:7890', 'https': ...}   ✓ picked up
+curl https://www.google.com  → timeout (25s)                                      ✗ not picked up
 ```
 
-**结论**：**不能用 `curl` 验证系统代理是否生效**，那验证的是「直连是否可达」。
-curl 只认 `http_proxy` 等环境变量或显式 `-x`。
+**Conclusion:** **you cannot use `curl` to check whether the system proxy works**; that only tests whether a direct connection is reachable. curl only honors environment variables like `http_proxy` or an explicit `-x`.
 
-**验证系统代理的正确方式**：
+**The right way to check the system proxy:**
 ```bash
 scutil --proxy | grep -i enable
 python3 -c "import urllib.request; print(urllib.request.getproxies())"
 ```
-或者直接看浏览器。
+or just try a browser.
 
 ---
 
-## 8. TUN 模式必须 root，且在受限沙箱里会失败
+## 8. TUN mode requires root and fails inside a restricted sandbox
 
-**实测**（非 root 运行，utun 创建）：
+**Measured** (running as non-root, creating utun):
 
 ```
 Start TUN listening error: configure tun interface: Connect: operation not permitted
 ```
 
-注意是 `operation not permitted` 而**不是** `permission denied` —— 这类错误通常意味着被安全
-策略（沙箱）拦截，而不是单纯的权限位问题。
+Note that this is `operation not permitted` and **not** `permission denied`. This kind of error usually means a security policy (sandbox) blocked it, not just file permission bits.
 
-**结论**：TUN 需要 `sudo`。菜单栏里通过 `osascript ... with administrator privileges` 提权调用
-`tun.sh`。
+**Conclusion:** TUN needs `sudo`. The menu bar app runs `tun.sh` with elevated rights via `osascript ... with administrator privileges`.
 
 ---
 
-## 9. 非 root 无法监听 80 / 443
+## 9. Non-root processes cannot listen on 80 / 443
 
-**实测**：
+**Measured:**
 ```
 listen tcp 127.0.0.1:80:  bind: permission denied
 listen tcp 127.0.0.1:443: bind: permission denied
@@ -141,43 +133,42 @@ listen tcp 127.0.0.1:7890: OK
 listen tcp 127.0.0.1:1080: OK
 ```
 
-所以 `mixed-port` 用 7890（也正好是 Clash 生态惯例，且是 macOS 系统代理常用端口）。
+So `mixed-port` uses 7890 (also the Clash ecosystem convention, and a common port for the macOS system proxy).
 
 ---
 
-## 10. 脚本里的全角标点会污染变量名
+## 10. Full-width punctuation in scripts pollutes variable names
 
-**实测**：`grn "...（指向 $PROXY_PORT）"` 在 `set -u` 下报
+**Measured:** `grn "...（指向 $PROXY_PORT）"` under `set -u` fails with
 
 ```
 PROXY_PORT）: unbound variable
 ```
 
-**原因**：bash 把全角右括号 `）` 当成了变量名的一部分。
+**Why:** bash treated the full-width right parenthesis `）` as part of the variable name.
 
-**规则**：变量后紧跟非 ASCII 字符时，一律写成 `${VAR}`。
+**Rule:** whenever a variable is immediately followed by a non-ASCII character, always write `${VAR}`.
 
-（打包前已全仓库扫描确认无同类问题。）
-
----
-
-## 11. 已编译二进制请勿手工 `cp` 后直接跑
-
-`codesign` 会修改 Mach-O，所以：
-
-- 源文件与 bundle 内二进制的 **SHA256 必然不同**（不是没编译成功）
-- `cp -R` 之后建议重新 `codesign --force --deep --sign -`，并 `xattr -dr com.apple.quarantine`
-
-**排查「改没改上」的正确方式**：往源码里插一个 ASCII 标记字符串再编译，然后
-`grep -a 标记 二进制`。中文 UTF-8 字面量用 `grep -a` 搜不到（会被编码处理），不要以此判断。
+(The whole repository was scanned before packaging to confirm there are no other cases; `scripts/check.sh` enforces this.)
 
 ---
 
-## 12. `swiftc` 默认缓存目录可能不可写
+## 11. Don't run a compiled binary after copying it by hand with `cp`
 
-`swiftc` 默认把模块缓存写到 `~/Library/Developer/...`。在受限环境下会失败。
+`codesign` modifies the Mach-O, so:
 
-**解决**：显式指定
+- The SHA256 of the build output and the binary inside the bundle **will always differ** (it doesn't mean the build failed)
+- After `cp -R`, re-run `codesign --force --deep --sign -` and `xattr -dr com.apple.quarantine`
+
+**The right way to check "did my change make it in":** insert an ASCII marker string into the source, rebuild, then `grep -a marker binary`. Chinese UTF-8 literals can't be found with `grep -a` (because of encoding), so don't rely on them.
+
+---
+
+## 12. `swiftc`'s default cache directory may not be writable
+
+By default `swiftc` writes its module cache to `~/Library/Developer/...`, which fails in restricted environments.
+
+**Fix:** set it explicitly
 ```bash
 swiftc -O app/*.swift -o build/Amyfree \
   -module-cache-path "${TMPDIR:-/tmp}/mihomo-swift-cache" \
@@ -186,58 +177,52 @@ swiftc -O app/*.swift -o build/Amyfree \
 
 ---
 
-## 13. 常见 API 端点位置（排查时常用）
+## 13. Common API endpoints (handy for troubleshooting)
 
-| 用途 | 端点 |
+| Purpose | Endpoint |
 |---|---|
-| 版本 | `GET /version` |
-| 策略组当前选中 | `GET /proxies/<组名>`（字段 `now`） |
-| **provider 节点列表** | `GET /providers/proxies/<provider名>` |
-| 快速测速 | `GET /proxies/<节点名>/delay?timeout=15000&url=...` |
+| Version | `GET /version` |
+| Group's current selection | `GET /proxies/<group name>` (field `now`) |
+| **Provider node list** | `GET /providers/proxies/<provider name>` |
+| Quick latency test | `GET /proxies/<node name>/delay?timeout=15000&url=...` |
 
-**注意**：节点列表在 `/providers/proxies/...`，**不是** `/proxies/<provider名>`
-（后者会返回 `{"message":"Resource not found"}`）。这个错误曾导致菜单栏节点列表恒为空。
+**Note:** the node list lives under `/providers/proxies/...`, **not** `/proxies/<provider name>` (the latter returns `{"message":"Resource not found"}`). This mistake once left the menu bar node list permanently empty.
 
-**中文组名**：`/proxies/手动选择` 原样传也能用（mihomo 两种都接受），但 URL 编码更稳妥。
+**Chinese group names:** `/proxies/手动选择` works when passed as-is (mihomo accepts both forms), but URL encoding is safer.
 
-**鉴权**：设了 `secret` 后，请求需带 `Authorization: Bearer <secret>`，否则 401。
-
----
-
-## 14. `proxy-providers` 的 `exclude-filter` 会误伤
-
-按关键词过滤「到期/流量/官网」等条目时要注意：不同机场的命名差异很大，过滤规则写太宽
-会把正常节点也滤掉。排查「节点数量不对」时先把它注释掉。
+**Authentication:** once `secret` is set, requests must include `Authorization: Bearer <secret>`, or they get a 401.
 
 ---
 
-## 15. `curl` 取出口 IP 必须加 `-L`
+## 14. `exclude-filter` on `proxy-providers` can catch real nodes
 
-**实测**：`http://1.1.1.1/cdn-cgi/trace` 会返回 **301**。不加 `-L` 时拿到的是重定向页面，
-`grep '^ip='` 自然什么都匹配不到，于是 `verify_node.sh` **误报「节点未生效」**——
-而同一时刻 `https://www.google.com`、`github.com`、`youtube.com` 全部返回 200。
-
-这个误报非常有迷惑性：功能明明是好的，验证脚本却报失败。
-**规则**：所有用于取出口 IP / trace 的 curl 都加 `-L`。
+When filtering entries such as "expiry / traffic / website" by keyword, be careful: naming varies widely between providers, and a filter that is too broad also removes normal nodes. When the node count looks wrong, comment it out first.
 
 ---
 
-## 16. 端口被占用时实例会「起来但完全不工作」
+## 15. `curl` must use `-L` when fetching the exit IP
 
-**实测场景**：`~/.config/mihomo` 的实例已占着 7890/9090，此时从另一个目录再启动一个
-mihomo，进程能起来、日志也显示 "Mixed proxy listening"，但：
+**Measured:** `http://1.1.1.1/cdn-cgi/trace` returns a **301**. Without `-L` you get the redirect page, `grep '^ip='` naturally matches nothing, and `verify_node.sh` **falsely reports "node not in effect"**, while at the same moment `https://www.google.com`, `github.com` and `youtube.com` all return 200.
 
-- API 请求返回 **401 Unauthorized**（连的其实是旧实例，secret 不同）
-- 出口 IP 判定结果错乱
+This false alarm is very misleading: the feature works, but the check script reports failure.
+**Rule:** every curl used to fetch the exit IP / trace must include `-L`.
 
-**极难排查**，因为表面上一切正常。
+---
 
-**已加防护**：`mihomoctl.sh start` 在启动前检查 7890/9090 是否被占用，占用则明确报错并列出
-占用进程，而不是静默启动一个废实例。
+## 16. On a port conflict, an instance "starts but doesn't work at all"
 
-**排查手段**：
+**Measured scenario:** with the `~/.config/mihomo` instance already holding 7890/9090, starting another mihomo from a different directory brings the process up, and the log even shows "Mixed proxy listening", but:
+
+- API requests return **401 Unauthorized** (they actually reach the old instance, which has a different secret)
+- The exit IP results are wrong
+
+**Extremely hard to diagnose**, because everything looks normal on the surface.
+
+**Guard added:** `mihomoctl.sh start` checks whether 7890/9090 are in use before starting; if so, it reports a clear error and lists the processes holding them, instead of silently starting a useless instance.
+
+**How to investigate:**
 ```bash
-lsof -nP -iTCP:9090 -sTCP:LISTEN     # 谁占着 API 端口
-lsof -nP -iTCP:7890 -sTCP:LISTEN     # 谁占着代理端口
-pgrep -fl "mihomo -d"                # 总共几个实例
+lsof -nP -iTCP:9090 -sTCP:LISTEN     # who holds the API port
+lsof -nP -iTCP:7890 -sTCP:LISTEN     # who holds the proxy port
+pgrep -fl "mihomo -d"                # how many instances in total
 ```

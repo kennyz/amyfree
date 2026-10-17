@@ -17,7 +17,7 @@ if [ "$NEED_DEPS" = true ]; then
   bash "$REPO/scripts/fetch-deps.sh"
 fi
 mkdir -p "$DEST/providers"
-for file in mihomoctl.sh proxyctl.sh tun.sh verify_node.sh parse_sub.py subscription.py node_speed.py chain_proxy.py cert_probe.py nodes.py geodata_update.py config.template.yaml; do
+for file in mihomoctl.sh proxyctl.sh tun.sh verify_node.sh parse_sub.py subscription.py node_speed.py chain_proxy.py cert_probe.py node_manager.py nodes.py geodata_update.py config.template.yaml; do
   temporary="$(mktemp "$DEST/.amyfree-copy.XXXXXX")"
   cp "$SRC/$file" "$temporary"
   case "$file" in *.sh|*.py) chmod 755 "$temporary";; *) chmod 644 "$temporary";; esac

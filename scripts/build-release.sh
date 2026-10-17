@@ -48,7 +48,7 @@ RUNTIME="$APP/Contents/Resources/runtime"
 PYTHON="$APP/Contents/Resources/Python"
 mkdir -p "$RUNTIME" "$APP/Contents/Resources/licenses"
 # Use an allowlist so user configuration and credentials can never enter the bundle.
-for file in mihomoctl.sh proxyctl.sh tun.sh verify_node.sh parse_sub.py subscription.py node_speed.py chain_proxy.py cert_probe.py nodes.py geodata_update.py config.template.yaml; do
+for file in mihomoctl.sh proxyctl.sh tun.sh verify_node.sh parse_sub.py subscription.py node_speed.py chain_proxy.py cert_probe.py node_manager.py nodes.py geodata_update.py config.template.yaml; do
   cp "$REPO/mihomo/$file" "$RUNTIME/$file"
 done
 cp "$REPO/scripts/refresh-geodata.sh" "$RUNTIME/refresh-geodata.sh"

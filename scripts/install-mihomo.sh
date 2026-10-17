@@ -22,7 +22,7 @@ echo "=== 安装到 $DST ==="
 mkdir -p "$DST/providers" "$HOME/Library/LaunchAgents" "$HOME/.local/bin"
 
 # 脚本与配置
-for f in mihomoctl.sh proxyctl.sh tun.sh verify_node.sh parse_sub.py subscription.py node_speed.py chain_proxy.py cert_probe.py nodes.py config.yaml; do
+for f in mihomoctl.sh proxyctl.sh tun.sh verify_node.sh parse_sub.py subscription.py node_speed.py chain_proxy.py cert_probe.py node_manager.py nodes.py config.yaml; do
   [ -e "$SRC/$f" ] && cp -f "$SRC/$f" "$DST/$f"
 done
 # 内核与规则库

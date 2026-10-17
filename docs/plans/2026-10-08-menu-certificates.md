@@ -1,9 +1,9 @@
-# 精简菜单与节点证书有效期
+# Compact Menu and Node Certificate Expiry
 
-一级菜单保留运行状态、当前节点、代理开关、选择节点、节点测速、订阅、设置、工具、退出。节点列表放入「选择节点」，修改/更新订阅放入「订阅」，分流/链式/系统代理/TUN/自启放入「设置」，日志/出口验证/配置目录/关于放入「工具」。保留原有快捷键和动作。
+The top-level menu keeps the running status, current node, proxy toggle, Select Node, Node Speed Test, Subscription, Settings, Tools and Quit. The node list goes under Select Node, editing/updating the subscription under Subscription, routing/chain/system proxy/TUN/launch at login under Settings, and log/exit IP check/config folder/About under Tools. Existing shortcuts and actions are kept.
 
-节点检测每 30 秒同时检查 TLS 叶证书的起止时间，测速窗口新增有效期列及到期日期提示。30 天内到期标黄，已过期或尚未生效标红；信任/域名校验失败单独标注。诊断允许只读取证书日期，绝不改变代理的证书验证配置、发送代理认证数据或把不受信证书标为正常。
+Every 30-second node check also reads the start and end dates of the TLS leaf certificate, and the speed test window gains an expiry column with an expiry date tooltip. Certificates expiring within 30 days are yellow, and expired or not-yet-valid ones are red; trust/hostname verification failures are marked separately. Diagnosis may read only the certificate dates; it never changes the proxy's certificate verification settings, sends proxy credentials, or marks an untrusted certificate as fine.
 
-REALITY、无 TLS 和 QUIC 协议明确显示不适用/暂不支持，连接失败显示无法确认。链式行汇总入口和出口中最严重的证书状态。网络检查与延迟检测并行，保持 GUI 响应和批次重入保护。
+REALITY, non-TLS and QUIC protocols are clearly shown as not applicable / not yet supported, and connection failures show "can't confirm". Chain rows summarize the most severe certificate state of the entry and exit. Network checks run in parallel with latency checks, keeping the GUI responsive and batch re-entry protection in place.
 
-验证时间边界、SNI、特殊协议、证书读取失败及链式汇总；本地 TLS 服务器集成测试与真实节点检查；运行实际菜单结构诊断，检查全部原有动作仍可达；编译、安装并保留现有用户配置。
+Verify time boundaries, SNI, special protocols, certificate read failures and chain summaries; run integration tests against a local TLS server and checks against real nodes; run the actual menu structure diagnostic to confirm every existing action is still reachable; build, install and keep the existing user configuration.

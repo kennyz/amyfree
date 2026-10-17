@@ -2,7 +2,7 @@ import AppKit
 
 // 原生绘制应用图标，所有坐标基于 1024 × 1024，构建时生成完整 macOS iconset。
 guard CommandLine.arguments.count == 2 else {
-    fputs("用法: swift scripts/generate-icon.swift <输出.iconset>\n", stderr)
+    fputs("用法: 与 app/CatGlyph.swift 一起编译后运行 <输出.iconset>（见 scripts/build-app.sh）\n", stderr)
     exit(1)
 }
 let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
@@ -31,39 +31,16 @@ func drawIcon() {
     tile.lineWidth = 3
     tile.stroke()
 
-    // 盾牌轮廓：柔和肩部与圆润下缘，留出清晰的负空间。
-    let shield = NSBezierPath()
-    shield.move(to: NSPoint(x: 512, y: 814))
-    shield.curve(to: NSPoint(x: 758, y: 715),
-                 controlPoint1: NSPoint(x: 601, y: 768), controlPoint2: NSPoint(x: 685, y: 743))
-    shield.line(to: NSPoint(x: 748, y: 498))
-    shield.curve(to: NSPoint(x: 512, y: 230),
-                 controlPoint1: NSPoint(x: 742, y: 360), controlPoint2: NSPoint(x: 624, y: 278))
-    shield.curve(to: NSPoint(x: 276, y: 498),
-                 controlPoint1: NSPoint(x: 400, y: 278), controlPoint2: NSPoint(x: 282, y: 360))
-    shield.line(to: NSPoint(x: 266, y: 715))
-    shield.curve(to: NSPoint(x: 512, y: 814),
-                 controlPoint1: NSPoint(x: 339, y: 743), controlPoint2: NSPoint(x: 423, y: 768))
-    shield.close()
-    NSGradient(colors: [color(0.30, 0.95, 0.81), color(0.12, 0.66, 0.94)])!
-        .draw(in: shield, angle: -65)
-
-    // M 形网络连线，端点代表节点。
-    let route = NSBezierPath()
-    route.move(to: NSPoint(x: 381, y: 448))
-    route.line(to: NSPoint(x: 381, y: 630))
-    route.line(to: NSPoint(x: 512, y: 504))
-    route.line(to: NSPoint(x: 643, y: 630))
-    route.line(to: NSPoint(x: 643, y: 448))
-    route.lineWidth = 44
-    route.lineCapStyle = .round
-    route.lineJoinStyle = .round
-    color(0.98, 1, 1).setStroke()
-    route.stroke()
-    color(0.98, 1, 1).setFill()
-    for x: CGFloat in [381, 643] {
-        NSBezierPath(ovalIn: NSRect(x: x - 33, y: 415, width: 66, height: 66)).fill()
+    // 猫咪：app/CatGlyph.swift 的自绘标志，按原盾牌配色做渐变填充。
+    let box = NSRect(x: 222, y: 214, width: 580, height: 580)
+    let symbol = catGlyphImage(size: box.width)
+    let cat = NSImage(size: box.size, flipped: false) { rect in
+        symbol.draw(in: rect)
+        NSGraphicsContext.current?.compositingOperation = .sourceAtop
+        NSGradient(colors: [color(0.30, 0.95, 0.81), color(0.12, 0.66, 0.94)])!.draw(in: rect, angle: -65)
+        return true
     }
+    cat.draw(in: box)
 }
 
 let representations: [(String, Int)] = [

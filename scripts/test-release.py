@@ -16,7 +16,7 @@ repo = Path(__file__).resolve().parents[1]
 with (repo / 'app/Info.plist').open('rb') as info:
     version = plistlib.load(info)['CFBundleShortVersionString']
 artifact = Path(sys.argv[1] if len(sys.argv) > 1 else repo / f'build/release/Amyfree-{version}-macOS-arm64.zip').resolve()
-forbidden = {'.api-secret', '.sub-url', '.sub-raw', 'config.yaml', '.run-config.yaml', '.mimio-chain.json', 'nodes.yaml'}
+forbidden = {'.api-secret', '.sub-url', '.sub-raw', 'config.yaml', '.run-config.yaml', '.mimio-chain.json', 'nodes.yaml', 'subscription.yaml', 'custom-nodes.json'}
 with tempfile.TemporaryDirectory(prefix='amyfree-release-test-') as tmp:
     root = Path(tmp)
     if artifact.suffix == '.zip':

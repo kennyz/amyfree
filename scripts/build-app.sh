@@ -49,7 +49,12 @@ cp "$REPO/scripts/install.sh" "$APP/Contents/Resources/install.sh"
 chmod +x "$APP/Contents/MacOS/Amyfree"
 
 echo "=== 生成应用图标 ==="
-swift -module-cache-path "$CACHE" "$REPO/scripts/generate-icon.swift" "$OUT/AppIcon.iconset"
+# 图标与菜单栏共用 app/CatGlyph.swift；多文件编译时入口须命名为 main.swift
+mkdir -p "$STAGING/icon"
+cp "$REPO/scripts/generate-icon.swift" "$STAGING/icon/main.swift"
+swiftc "$STAGING/icon/main.swift" "$APP_SRC/CatGlyph.swift" -o "$STAGING/icon/generate-icon" \
+  -module-cache-path "$CACHE" -target arm64-apple-macosx13.0 -framework AppKit
+"$STAGING/icon/generate-icon" "$OUT/AppIcon.iconset"
 iconutil -c icns "$OUT/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
 
 # ad-hoc 签名：本机运行足够，且避免 Gatekeeper 直接拦掉

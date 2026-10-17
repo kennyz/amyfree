@@ -14,6 +14,12 @@ final class UpgradeCoordinator {
     var lastCheck: Date? { defaults.object(forKey: "AmyfreeUpgrade.lastCheck") as? Date }
     var hasUpdates: Bool { rows.values.contains { $0.available } }
     var lastAttempt: Date? { defaults.object(forKey: "AmyfreeUpgrade.lastAttempt") as? Date }
+    /// 发现的新应用版本号（如 "1.7.0"）；重启后从上次检查结果恢复，没有新版本时为 nil。
+    var availableAppVersion: String? {
+        guard rows[.application]?.available == true else { return nil }
+        if let release = release { return release.version }
+        return defaults.string(forKey: "AmyfreeUpgrade.availableTag").map { String($0.dropFirst()) } ?? ""
+    }
 
     init(directory: String, defaults: UserDefaults = .standard,
          applicationCheck: @escaping () throws -> AvailableUpdate? = AppUpdater.check,

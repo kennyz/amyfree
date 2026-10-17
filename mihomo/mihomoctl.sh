@@ -51,9 +51,9 @@ refresh_nodes() {
 
 start() {
   if is_running; then ylw "• $(t '已在运行' 'Already running') (pid $(cat "$PIDFILE"))"; return 0; fi
-  need_sub || return 1
-  # 没有节点文件就先拉一次
+  # 没有节点文件就先拉一次；只有手工节点时无需订阅
   if [ ! -s "$NODES_FILE" ]; then
+    need_sub || return 1
     refresh_nodes || return 1
   fi
   # 同步 API secret 到 config（脚本用占位符 __API_SECRET__）

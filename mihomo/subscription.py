@@ -34,6 +34,7 @@ class SubscriptionManager:
         self.directory = Path(directory)
         self.url_file = self.directory / '.sub-url'
         self.nodes_file = self.directory / 'providers/nodes.yaml'
+        self.base_file = self.directory / 'providers/subscription.yaml'
         self.runtime_file = self.directory / '.run-config.yaml'
         self.api = os.environ.get('MIHOMO_API', '127.0.0.1:9090')
 
@@ -136,19 +137,24 @@ class SubscriptionManager:
             except OSError:
                 raise SubscriptionError(t('尚未设置订阅地址。', 'No subscription URL set yet.')) from None
         proxies = self.fetch(url)
-        nodes = (to_yaml({'proxies': proxies}) + '\n').encode('utf-8')
         if operation == 'test':
             print(t('✓ 订阅测试通过；订阅地址、节点和代理状态均未修改', '✓ Subscription test passed; the URL, nodes and proxy state were not changed'), flush=True)
             return
-        # 延迟导入避免与链式设置模块的 atomic_write 导入形成循环。
+        # 延迟导入避免与链式设置、节点管理模块的 atomic_write 导入形成循环。
         from chain_proxy import subscription_updates
+        from node_manager import merge_custom
+        # 订阅原样另存，手工添加/编辑的节点合并后再交给内核。
+        base = (to_yaml({'proxies': proxies}) + '\n').encode('utf-8')
+        proxies = merge_custom(self.directory, proxies)
+        nodes = (to_yaml({'proxies': proxies}) + '\n').encode('utf-8')
         chain_changes = subscription_updates(self.directory, proxies)
         if operation == 'fetch':
+            atomic_write(self.base_file, base)
             atomic_write(self.nodes_file, nodes)
             for path, content in chain_changes.items(): atomic_write(path, content)
             return
         was_running = self.running()
-        paths = list(dict.fromkeys([self.url_file, self.nodes_file, self.runtime_file] + list(chain_changes)))
+        paths = list(dict.fromkeys([self.url_file, self.base_file, self.nodes_file, self.runtime_file] + list(chain_changes)))
         snapshots = {path: path.read_bytes() if path.exists() else None for path in paths}
         stopped = False
         start_attempted = False
@@ -156,6 +162,7 @@ class SubscriptionManager:
             if was_running:
                 self.control('stop')
                 stopped = True
+            atomic_write(self.base_file, base)
             atomic_write(self.nodes_file, nodes)
             atomic_write(self.url_file, url.encode('utf-8'))
             for path, content in chain_changes.items(): atomic_write(path, content)
