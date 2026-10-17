@@ -7,7 +7,7 @@ final class LocalNodeProbeBackend: NodeProbeBackend {
     private var cancelled = false
     init(directory: String) { self.directory = directory }
     func fingerprint() -> String {
-        // Python 的纳秒时间戳不能由 Foundation 精确重建；使用 helper 回传值并以文件签名检测变化。
+        // 以文件签名检测节点或链式设置的变化。
         let paths = ["providers/nodes.yaml", ".mimio-chain.json"]
         return paths.map { path in
             let attributes = try? FileManager.default.attributesOfItem(atPath: "\(directory)/\(path)")
@@ -17,9 +17,9 @@ final class LocalNodeProbeBackend: NodeProbeBackend {
     func perform(_ arguments: [String]) throws -> [String: Any] {
         let initial = fingerprint()
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: AppRuntime.python)
+        task.executableURL = URL(fileURLWithPath: AppRuntime.helper(in: directory))
         task.environment = AppRuntime.environment
-        task.arguments = ["\(directory)/node_speed.py", "--home", directory] + arguments
+        task.arguments = ["node-speed", "--home", directory] + arguments
         let output = Pipe()
         task.standardOutput = output
         task.standardError = FileHandle.nullDevice

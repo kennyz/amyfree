@@ -7,33 +7,29 @@ struct RuntimeInstallError: LocalizedError {
 }
 
 enum AppRuntime {
-    static let files = ["mihomoctl.sh", "proxyctl.sh", "tun.sh", "verify_node.sh",
-                        "parse_sub.py", "subscription.py", "node_speed.py", "chain_proxy.py",
-                        "cert_probe.py", "node_manager.py", "nodes.py", "geodata_update.py", "refresh-geodata.sh", "config.template.yaml",
+    static let files = ["mihomoctl.sh", "proxyctl.sh", "tun.sh", "verify_node.sh", "refresh-geodata.sh", "config.template.yaml",
                         "geoip.dat", "geosite.dat", "country.mmdb"]
 
-    static var python: String {
-        let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/Python/bin/python3").path
-        return FileManager.default.isExecutableFile(atPath: bundled) ? bundled : "/usr/bin/python3"
+    /// Native runtime helper (Rust) that replaced the Python scripts; built into Contents/MacOS.
+    static let helperName = "amyfree-helper"
+    static var bundledHelper: String { Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/\(helperName)").path }
+
+    /// The helper the app runs: the bundled one, or the copy in the config folder (debug runs outside a bundle).
+    static func helper(in directory: String) -> String {
+        FileManager.default.isExecutableFile(atPath: bundledHelper) ? bundledHelper : "\(directory)/\(helperName)"
     }
 
     static var environment: [String: String] {
         var result = ProcessInfo.processInfo.environment
-        result["PATH"] = "\(URL(fileURLWithPath: python).deletingLastPathComponent().path):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin"
-        let certificates = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/Python/lib/python3.13/site-packages/certifi/cacert.pem").path
-        if FileManager.default.fileExists(atPath: certificates) { result["SSL_CERT_FILE"] = certificates }
-        // Never write bytecode back into the sealed, signed application bundle.
-        result["PYTHONDONTWRITEBYTECODE"] = "1"
-        result["PYTHONNOUSERSITE"] = "1"
+        result["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
         // 运行脚本按此输出提示文字，与界面语言一致
         result["AMYFREE_LANG"] = AppLanguage.current.rawValue
-        result.removeValue(forKey: "PYTHONHOME")
-        result.removeValue(forKey: "PYTHONPATH")
         return result
     }
 
     @discardableResult
     static func prepare(directory: String) throws -> Bool {
+        try installHelper(directory: directory)
         guard let resources = Bundle.main.resourceURL?.appendingPathComponent("runtime"),
               FileManager.default.fileExists(atPath: resources.path) else { return false }
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
@@ -41,21 +37,31 @@ enum AppRuntime {
         let updated = try install(resources: resources,
                                   binary: Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/mihomo"),
                                   destination: destination, version: version)
-        // Administrative and terminal launches do not inherit the app's environment.
-        // Refresh the launcher when the application has moved to a new location.
-        func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-        var launcher = "#!/bin/bash\nexport PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1\nunset PYTHONHOME PYTHONPATH\n"
-        if let certificates = environment["SSL_CERT_FILE"] {
-            launcher += "[ ! -f \(quote(certificates)) ] || export SSL_CERT_FILE=\(quote(certificates))\n"
-        }
-        // 应用被移走或换成不带 Python 的源码构建时，退回系统 Python，避免内核无法启动
-        launcher += "[ ! -x \(quote(python)) ] || exec \(quote(python)) \"$@\"\nexec /usr/bin/python3 \"$@\"\n"
-        let target = destination.appendingPathComponent("python3")
-        if (try? String(contentsOf: target, encoding: .utf8)) != launcher {
-            try launcher.write(to: target, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: target.path)
-        }
         return updated
+    }
+
+    /// Copies the bundled helper into the config folder whenever it differs, so the shell scripts
+    /// (and terminal or administrator runs, which don't know where the app is) can use it.
+    /// Also removes the Python launcher left by versions before 1.7.
+    static func installHelper(directory: String) throws {
+        let manager = FileManager.default
+        let target = URL(fileURLWithPath: directory).appendingPathComponent(helperName)
+        if manager.isExecutableFile(atPath: bundledHelper), let bundled = manager.contents(atPath: bundledHelper),
+           manager.contents(atPath: target.path) != bundled {
+            try manager.createDirectory(atPath: directory, withIntermediateDirectories: true)
+            let temporary = target.deletingLastPathComponent().appendingPathComponent(".\(helperName).incoming")
+            try? manager.removeItem(at: temporary)
+            try bundled.write(to: temporary)
+            try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: temporary.path)
+            _ = try manager.replaceItemAt(target, withItemAt: temporary)
+        }
+        let launcher = URL(fileURLWithPath: directory).appendingPathComponent("python3")
+        if let text = try? String(contentsOf: launcher, encoding: .utf8), text.contains("PYTHONDONTWRITEBYTECODE") {
+            try? manager.removeItem(at: launcher)
+        }
+        for old in ["parse_sub.py", "subscription.py", "node_speed.py", "chain_proxy.py", "cert_probe.py", "node_manager.py", "nodes.py", "geodata_update.py"] {
+            try? manager.removeItem(atPath: "\(directory)/\(old)")
+        }
     }
 
     @discardableResult

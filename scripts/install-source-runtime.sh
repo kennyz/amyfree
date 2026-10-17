@@ -17,11 +17,24 @@ if [ "$NEED_DEPS" = true ]; then
   bash "$REPO/scripts/fetch-deps.sh"
 fi
 mkdir -p "$DEST/providers"
-for file in mihomoctl.sh proxyctl.sh tun.sh verify_node.sh parse_sub.py subscription.py node_speed.py chain_proxy.py cert_probe.py node_manager.py nodes.py geodata_update.py config.template.yaml; do
+for file in mihomoctl.sh proxyctl.sh tun.sh verify_node.sh config.template.yaml; do
   temporary="$(mktemp "$DEST/.amyfree-copy.XXXXXX")"
   cp "$SRC/$file" "$temporary"
-  case "$file" in *.sh|*.py) chmod 755 "$temporary";; *) chmod 644 "$temporary";; esac
+  case "$file" in *.sh) chmod 755 "$temporary";; *) chmod 644 "$temporary";; esac
   mv -f "$temporary" "$DEST/$file"
+done
+# Native runtime helper (replaces the Python scripts of earlier versions).
+HELPER="$REPO/build/amyfree-helper"
+if [ ! -x "$HELPER" ]; then
+  cargo build --release --quiet --manifest-path "$REPO/Cargo.toml" -p amyfree-core --bin amyfree-helper
+  HELPER="$REPO/target/release/amyfree-helper"
+fi
+temporary="$(mktemp "$DEST/.amyfree-copy.XXXXXX")"
+cp "$HELPER" "$temporary"
+chmod 755 "$temporary"
+mv -f "$temporary" "$DEST/amyfree-helper"
+for old in parse_sub.py subscription.py node_speed.py chain_proxy.py cert_probe.py node_manager.py nodes.py geodata_update.py; do
+  rm -f "$DEST/$old"
 done
 cp "$REPO/scripts/refresh-geodata.sh" "$DEST/refresh-geodata.sh"
 chmod 755 "$DEST/refresh-geodata.sh"
@@ -44,8 +57,7 @@ if [ ! -s "$DEST/.api-secret" ]; then
   openssl rand -hex 32 > "$DEST/.api-secret"
   chmod 600 "$DEST/.api-secret"
 fi
-# A prior Release installation may have left a launcher pointing into the old app.
-# Source builds use the Command Line Tools Python, so remove only our own launcher.
+# Versions before 1.7 left a Python launcher; remove only our own.
 if [ -f "$DEST/python3" ] && grep -q '^export PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1$' "$DEST/python3"; then
   rm -f "$DEST/python3"
 fi

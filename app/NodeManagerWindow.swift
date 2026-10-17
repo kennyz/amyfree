@@ -183,7 +183,7 @@ final class NodeManagerWindowController: NSWindowController {
     // MARK: 同步与保存
 
     private func helper(_ arguments: [String], input: String? = nil, timeout: TimeInterval = 10) -> (ok: Bool, object: [String: Any]?) {
-        let result = run(AppRuntime.python, ["\(CFG_DIR)/node_manager.py"] + arguments + ["--home", CFG_DIR], timeout: timeout, input: input)
+        let result = run(AppRuntime.helper(in: CFG_DIR), ["node-manager"] + arguments + ["--home", CFG_DIR], timeout: timeout, input: input)
         let object = result.out.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         return (result.status == 0 && object != nil, object)
     }

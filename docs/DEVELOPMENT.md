@@ -4,7 +4,8 @@ Reference for working on the source. For downloads and everyday use, see the [pr
 
 A proxy setup for macOS: the **mihomo (Clash.Meta) core** plus a **pure AppKit menu bar control panel**.
 
-- No third-party dependencies and no Xcode project (native Swift / AppKit, built directly with `swiftc`)
+- No interpreter at runtime: the menu bar app is native Swift / AppKit (built with `swiftc`, no Xcode project), and the runtime helper `amyfree-helper` is a Rust binary
+- Rewrite in progress: the Rust core in `core/` will also power a cross-platform Tauri app for macOS and Windows (see `docs/plans/2026-10-17-rust-rewrite.md`)
 - Broad subscription support, including the common **base64-encoded raw link** subscriptions (vless/vmess/ss/trojan)
 - Full Clash YAML/JSON subscriptions; only nodes are imported, existing routing and DNS settings are left alone
 - One-click on/off: starting the core takes over the macOS system proxy so browsers work immediately
@@ -21,10 +22,10 @@ A proxy setup for macOS: the **mihomo (Clash.Meta) core** plus a **pure AppKit m
 
 ## Quick Start
 
-Menu bar app (Apple Silicon Mac with Xcode Command Line Tools):
+Menu bar app (Apple Silicon Mac with Xcode Command Line Tools and a Rust toolchain from [rustup.rs](https://rustup.rs)):
 
 ```bash
-bash scripts/build-app.sh            # compile and package into build/
+bash scripts/build-app.sh            # compile the app and amyfree-helper, package into build/
 bash scripts/install-menubar.sh      # prepare core/rule data, install to ~/Applications and launch
 ```
 
@@ -69,18 +70,22 @@ Advanced setups that need a standalone core LaunchAgent can still use `bash scri
 │   ├── NodeImport.swift        QR code image decoding and node link extraction
 │   ├── CatGlyph.swift          Cat glyph drawing (shared by the menu bar and app icon)
 │   └── Info.plist              LSUIElement=true (menu bar only, no Dock icon)
+├── core/                       Rust core library + amyfree-helper CLI (replaces the former Python scripts)
+│   ├── src/yaml.rs             Safe, order-preserving YAML/JSON reader and node-file writer
+│   ├── src/subscription.rs     Subscription parsing (Clash YAML/JSON, share links, base64), update transaction
+│   ├── src/node_manager.rs     Custom and edited nodes, merged with the subscription into nodes.yaml
+│   ├── src/chain.rs            Two-hop chain config, reload and rollback
+│   ├── src/speed.rs            Isolated-session latency checks and real download speed tests
+│   ├── src/cert.rs             TLS certificate expiry and trust status (OS trust store)
+│   ├── src/geodata.rs          GeoIP/GeoSite/MMDB download, verification and replacement
+│   ├── src/support.rs          Files, processes, locking, local HTTP
+│   ├── src/bin/amyfree-helper.rs  Command-line entry point used by the app and scripts
+│   └── tests/integration.rs    Real sockets, TLS server and mihomo core tests
 ├── mihomo/                     Runtime (scripts + config template; dependencies come from fetch-deps.sh)
 │   ├── mihomoctl.sh            Core control: start/stop/restart/status/sub/refresh/nodes/verify/env
 │   ├── proxyctl.sh             macOS system proxy switch: on/off/status/refresh
 │   ├── tun.sh                  TUN mode switch (needs sudo)
 │   ├── verify_node.sh          Hard node connectivity check (the exit IP must change)
-│   ├── parse_sub.py            base64 subscription → Clash YAML converter (core logic)
-│   ├── subscription.py         Subscription testing, node validation, updates and rollback
-│   ├── node_speed.py           Isolated-session latency checks and real download speed tests
-│   ├── chain_proxy.py          Two-hop chain config, reload and rollback
-│   ├── cert_probe.py           TLS certificate expiry, trust status and chain summary
-│   ├── node_manager.py         Custom and edited nodes, merged with the subscription into nodes.yaml
-│   ├── nodes.py                Node list and latency display
 │   └── config.template.yaml    Config template (config.yaml is generated at install)
 ├── scripts/
 │   ├── fetch-deps.sh           Download the core and rule data (via mirrors reachable from China)
@@ -101,7 +106,7 @@ Advanced setups that need a standalone core LaunchAgent can still use `bash scri
 ### Data flow
 
 ```
-Subscription URL ──curl──> .sub-raw ──parse_sub.py──> providers/nodes.yaml
+Subscription URL ──curl──> amyfree-helper ──────────> providers/nodes.yaml
                                                             │
                                                  loaded by mihomo as type:file
                                                             │
@@ -136,6 +141,9 @@ MIHOMO_HOME="$PWD/mihomo" build/Amyfree.app/Contents/MacOS/Amyfree
 ---
 
 ## Common Commands
+
+The Rust tests: `cargo test` (from the repository root).
+
 
 ```bash
 cd mihomo
@@ -186,7 +194,7 @@ The toggle uses [Apple SMAppService.mainApp](https://developer.apple.com/documen
 
 Regression tests: `bash scripts/test-startup.sh`. Check the state from an installed app: `~/Applications/Amyfree.app/Contents/MacOS/Amyfree --login-status`.
 
-Subscription compatibility and rollback tests: `python3 -m unittest discover -s tests -p 'test_subscription.py'`. They cover Clash YAML/JSON, links/base64, type preservation, bad input, test-only runs that write nothing, and config rollback after a failed start.
+Subscription compatibility and rollback tests: `cargo test` (module `subscription`). They cover Clash YAML/JSON, links/base64, type preservation, bad input, test-only runs that write nothing, and config rollback after a failed start.
 
 ## Node Speed Test and Chain Proxy
 
@@ -198,7 +206,7 @@ Subscription compatibility and rollback tests: `python3 -m unittest discover -s 
 
 Once on, the speed test list includes the whole chain. Subscription updates refresh the chain nodes' credentials, and if the entry or exit disappears, the chain turns off and the policy groups are restored. The core validates before saving; while running, the config is reloaded and read back, and failures restore the config. The chain is off by default and needs nodes chosen before it can be enabled.
 
-Tests: `bash scripts/test-probe.sh` and `python3 -m unittest discover -s tests -p 'test_chain_speed.py'`. Download samples come from [Cloudflare's public speed test endpoint](https://github.com/cloudflare/speedtest).
+Tests: `bash scripts/test-probe.sh` and `cargo test` (modules `chain` and `speed`, plus the real-core latency test in `core/tests/integration.rs`). Download samples come from [Cloudflare's public speed test endpoint](https://github.com/cloudflare/speedtest).
 
 ## Node Management
 
@@ -211,7 +219,7 @@ Tests: `bash scripts/test-probe.sh` and `python3 -m unittest discover -s tests -
 
 The subscription's own nodes are stored in `providers/subscription.yaml` and manual changes in `custom-nodes.json` (`added` holds new nodes; `edited` holds edited subscription nodes keyed by their original name). The two are merged into `providers/nodes.yaml`, which the core loads. Edits still apply after subscription updates; an added node whose name now clashes with a subscription node is skipped for that update with a warning. Added nodes can be deleted, and edited subscription nodes can be restored to the subscription version; subscription nodes themselves cannot be deleted. The proxy can also start with only manual nodes and no subscription.
 
-Tests: `python3 -m unittest discover -s tests -p 'test_node_manager.py'`; form field mapping and QR decoding: `bash scripts/test-node-form.sh`.
+Tests: `cargo test` (module `node_manager`); form field mapping and QR decoding: `bash scripts/test-node-form.sh`.
 
 ## Compact Menu and Certificate Expiry
 
@@ -223,7 +231,7 @@ The speed test window has a "Certificate" column, updated every 3 minutes alongs
 
 The check reads the node server's leaf certificate using the configured SNI, sends no proxy credentials, and does not change the node's certificate verification options. Untrusted certificates are read during diagnosis only to show their validity period; the result still records the verification failure.
 
-Certificate tests: `python3 -m unittest discover -s tests -p 'test_cert_probe.py'`. Menu structure check: `~/Applications/Amyfree.app/Contents/MacOS/Amyfree --menu-structure`.
+Certificate tests: `cargo test` (module `cert`, plus a local self-signed TLS server in `core/tests/integration.rs`). Menu structure check: `~/Applications/Amyfree.app/Contents/MacOS/Amyfree --menu-structure`.
 
 ---
 
@@ -233,7 +241,7 @@ Certificate tests: `python3 -m unittest discover -s tests -p 'test_cert_probe.py
 |---|---|
 | OS | macOS 13+ (developed on macOS 27 / Apple Silicon; for Intel, change `-target` in `build-app.sh`) |
 | Core | mihomo v1.19.32; TUN needs a `with_gvisor` build |
-| Python | Link parsing uses only the standard library; safe Clash YAML loading prefers PyYAML and falls back to the system Ruby/Psych on macOS |
+| Runtime helper | `amyfree-helper` (Rust), installed into the config folder by the app; no Python or other interpreter is needed. YAML is read safely: only standard tags, size-limited aliases |
 | TUN | **Requires root**; it takes over the default route, and non-root processes cannot create utun |
 | System proxy | Only covers apps that honor the system proxy (browsers, most CLIs). Use TUN for apps that don't |
 
@@ -255,7 +263,7 @@ Certificate tests: `python3 -m unittest discover -s tests -p 'test_cert_probe.py
 
 ## Release Builds
 
-On Apple Silicon, run `bash scripts/build-release.sh` with a Developer ID Application certificate in the keychain. The script downloads and verifies pinned public dependencies, packages a DMG/ZIP that bundles the core, rule data and Python, and writes a SHA-256 manifest.
+On Apple Silicon, run `bash scripts/build-release.sh` with a Developer ID Application certificate in the keychain. The script downloads and verifies pinned public dependencies, packages a DMG/ZIP that bundles the mihomo core, rule data and `amyfree-helper`, and writes a SHA-256 manifest.
 
 With Apple notarization credentials configured, use `NOTARY_PROFILE=<keychain profile name> bash scripts/build-release.sh` to notarize and staple the ticket. Without a profile the build is only signed, and it does not claim to be notarized. The signing identity can also be set with `CODE_SIGN_IDENTITY`.
 
@@ -273,7 +281,7 @@ From a terminal you can choose the location and skip reopening: `bash scripts/in
 
 The Upgrade Center (see below) and `bash scripts/refresh-geodata.sh ~/.config/mihomo` use the same component. It downloads GeoIP/GeoSite/MMDB with their SHA-256 sums, then has the local core check each DAT/MMDB file; files are replaced only if all checks pass, and a failed save is rolled back automatically. Updates don't touch the subscription or config and don't interrupt current connections; they take effect the next time the proxy starts. `GEODATA_BASE` overrides the source, which must also serve a matching `.sha256sum` file for each database.
 
-Regression tests: `python3 -m unittest discover -s tests -p 'test_geodata_update.py'`.
+Regression tests: `cargo test` (module `geodata`).
 
 ## Unified Upgrade Center (1.5.0)
 
@@ -281,4 +289,4 @@ Regression tests: `python3 -m unittest discover -s tests -p 'test_geodata_update
 
 Check times and the per-item red-dot reminders are stored in UserDefaults. Checks run every 24 hours and keep their schedule across restarts and wake from sleep. Viewing the window doesn't clear a red dot; only completing that upgrade does, and a failed check keeps any known reminders.
 
-Verification: `bash scripts/test-upgrade-center.sh`, `bash scripts/test-update.sh`, `python3 -m unittest discover -s tests -p 'test_geodata_update.py'`. Offscreen UI preview: `build/Amyfree.app/Contents/MacOS/Amyfree --render-upgrade-center build/upgrade-center.png`; add `--preview-progress` to see the progress styles.
+Verification: `bash scripts/test-upgrade-center.sh`, `bash scripts/test-update.sh`, `cargo test`. Offscreen UI preview: `build/Amyfree.app/Contents/MacOS/Amyfree --render-upgrade-center build/upgrade-center.png`; add `--preview-progress` to see the progress styles.

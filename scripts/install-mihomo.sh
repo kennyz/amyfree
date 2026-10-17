@@ -22,9 +22,16 @@ echo "=== 安装到 $DST ==="
 mkdir -p "$DST/providers" "$HOME/Library/LaunchAgents" "$HOME/.local/bin"
 
 # 脚本与配置
-for f in mihomoctl.sh proxyctl.sh tun.sh verify_node.sh parse_sub.py subscription.py node_speed.py chain_proxy.py cert_probe.py node_manager.py nodes.py config.yaml; do
+for f in mihomoctl.sh proxyctl.sh tun.sh verify_node.sh config.yaml; do
   [ -e "$SRC/$f" ] && cp -f "$SRC/$f" "$DST/$f"
 done
+# 运行组件（Rust 编译，取代早期版本的 Python 脚本）
+HELPER="$REPO/build/amyfree-helper"
+if [ ! -x "$HELPER" ]; then
+  cargo build --release --quiet --manifest-path "$REPO/Cargo.toml" -p amyfree-core --bin amyfree-helper
+  HELPER="$REPO/target/release/amyfree-helper"
+fi
+cp -f "$HELPER" "$DST/amyfree-helper"
 # 内核与规则库
 for f in mihomo geoip.dat geosite.dat country.mmdb; do
   cp -f "$SRC/$f" "$DST/$f"
@@ -35,7 +42,7 @@ for f in .api-secret .sub-url; do
     cp -f "$SRC/$f" "$DST/$f"
   elif [ ! -s "$DST/$f" ]; then
     if [ "$f" = ".api-secret" ]; then
-      python3 -c "import base64,os;print(base64.b64encode(os.urandom(24)).decode().replace('/','').replace('+','').replace('=','')[:24])" > "$DST/$f"
+      openssl rand -hex 16 > "$DST/$f"
     else
       echo "https://example.com/subs/REPLACE_ME" > "$DST/$f"
     fi
@@ -44,7 +51,7 @@ for f in .api-secret .sub-url; do
 done
 [ -s "$SRC/providers/nodes.yaml" ] && cp -f "$SRC/providers/nodes.yaml" "$DST/providers/nodes.yaml" || true
 
-chmod 755 "$DST/mihomo" "$DST"/*.sh "$DST"/nodes.py "$DST"/parse_sub.py
+chmod 755 "$DST/mihomo" "$DST"/*.sh "$DST/amyfree-helper"
 ln -sf "$DST/mihomo" "$HOME/.local/bin/mihomo"
 echo "✓ 文件已就位"
 

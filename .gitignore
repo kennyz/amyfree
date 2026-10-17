@@ -33,6 +33,7 @@ custom-nodes.json
 .geodata-update-*/
 .*.incoming
 /mihomo/python3
+/mihomo/amyfree-helper
 mihomo.log
 cache.db
 
@@ -43,3 +44,6 @@ __pycache__/
 *.swp
 .idea/
 .vscode/
+
+# Rust
+/target/

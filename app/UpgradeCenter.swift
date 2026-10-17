@@ -92,9 +92,9 @@ final class UpgradeCoordinator {
         }
     }
     private func checkGeodata() throws -> [String: Any] {
-        let helper = "\(directory)/geodata_update.py"
-        guard FileManager.default.fileExists(atPath: helper) else { throw AppUpdateError(message: tr("运行组件尚未准备好，请重新安装应用。", "Runtime components aren't ready. Please reinstall the app.")) }
-        let result = try UpgradeProcess.run(AppRuntime.python, [helper, "--home", directory, "--check", "--json"], timeout: 700)
+        let helper = AppRuntime.helper(in: directory)
+        guard FileManager.default.isExecutableFile(atPath: helper) else { throw AppUpdateError(message: tr("运行组件尚未准备好，请重新安装应用。", "Runtime components aren't ready. Please reinstall the app.")) }
+        let result = try UpgradeProcess.run(helper, ["geodata", "--home", directory, "--check", "--json"], timeout: 700)
         let objects = Self.events(result.text)
         guard result.status == 0, let files = objects.last(where: { $0["event"] as? String == "checked" })?["files"] as? [String: Any] else {
             let detail = objects.last?["message"] as? String ?? tr("规则库检查失败，请检查网络后重试。", "Rule data check failed. Check your network and try again.")
@@ -128,9 +128,9 @@ final class UpgradeCoordinator {
                         }
                     }
                 } else {
-                    let helper = "\(self.directory)/geodata_update.py"
+                    let helper = AppRuntime.helper(in: self.directory)
                     var consumed = 0
-                    let result = try UpgradeProcess.run(AppRuntime.python, [helper, "--home", self.directory, "--json", "--files", component.file!], timeout: 1000, output: { output in
+                    let result = try UpgradeProcess.run(helper, ["geodata", "--home", self.directory, "--json", "--files", component.file!], timeout: 1000, output: { output in
                         let events = Self.events(output.components(separatedBy: "\n").dropLast().joined(separator: "\n"))
                         for event in events.dropFirst(consumed) where event["event"] as? String == "progress" {
                             let phase = event["phase"] as? String ?? ""

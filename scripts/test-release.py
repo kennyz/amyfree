@@ -34,9 +34,14 @@ with tempfile.TemporaryDirectory(prefix='amyfree-release-test-') as tmp:
     subprocess.run([str(executable), '--prepare-runtime'], env=env, check=True)
     assert (home / '.api-secret').stat().st_mode & 0o777 == 0o600
     assert not (home / '.sub-url').exists()
-    python = home / 'python3'
-    subprocess.run([str(python), '-c', 'import yaml,ssl,certifi; assert ssl.create_default_context().cert_store_stats()["x509_ca"] > 0; print("PASS bundled Python, YAML and certificate trust store")'], env=env, check=True)
-    subprocess.run([str(python), '-m', 'unittest', 'discover', '-s', str(repo / 'tests'), '-p', 'test_*.py'], env=env, check=True)
+    # No interpreter ships with the app any more; the runtime helper is native.
+    assert not (moved / 'Contents/Resources/Python').exists()
+    helper = home / 'amyfree-helper'
+    assert helper.is_file() and not (home / 'python3').exists()
+    parsed = subprocess.run([str(helper), 'node-manager', 'parse'], input=b'trojan://fixture@node.example:443#fixture', env=env, check=True, capture_output=True)
+    assert json.loads(parsed.stdout)['node']['server'] == 'node.example'
+    print('PASS native runtime helper')
+    subprocess.run(['cargo', 'test', '--quiet', '--manifest-path', str(repo / 'Cargo.toml')], check=True)
     menu = subprocess.check_output([str(executable), '--menu-structure', '-AmyfreeLanguage', 'zh'], env=env, text=True)
     menu_items = json.loads(menu)
     assert len(menu_items) > 0
@@ -47,7 +52,7 @@ with tempfile.TemporaryDirectory(prefix='amyfree-release-test-') as tmp:
     assert (moved / 'Contents/Resources/install.sh').is_file()
     assert '更新规则库' not in menu and '检查更新' not in menu
     assert (home / 'refresh-geodata.sh').is_file()
-    assert (home / 'geodata_update.py').is_file()
+    assert not list(home.glob('*.py'))
     before = hashlib.sha256((home / 'config.yaml').read_bytes()).hexdigest()
     secret = (home / '.api-secret').read_bytes()
     subprocess.run([str(executable), '--prepare-runtime'], env=env, check=True)

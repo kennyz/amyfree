@@ -40,13 +40,21 @@ swiftc -O "$APP_SRC"/*.swift -o "$OUT/Amyfree" \
 echo "✓ 编译完成: $(du -h "$OUT/Amyfree" | cut -f1)"
 
 echo
+echo "=== 编译运行组件 amyfree-helper（Rust） ==="
+command -v cargo >/dev/null 2>&1 || { echo "✗ 未找到 cargo。请安装 Rust：https://rustup.rs"; exit 1; }
+cargo build --release --quiet --manifest-path "$REPO/Cargo.toml" -p amyfree-core --bin amyfree-helper
+cp "$REPO/target/release/amyfree-helper" "$OUT/amyfree-helper"
+echo "✓ amyfree-helper: $(du -h "$OUT/amyfree-helper" | cut -f1)"
+
+echo
 echo "=== 打包 .app ==="
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$OUT/Amyfree" "$APP/Contents/MacOS/"
+cp "$OUT/amyfree-helper" "$APP/Contents/MacOS/"
 cp "$APP_SRC/Info.plist" "$APP/Contents/"
 cp "$REPO/scripts/install.sh" "$APP/Contents/Resources/install.sh"
-chmod +x "$APP/Contents/MacOS/Amyfree"
+chmod +x "$APP/Contents/MacOS/Amyfree" "$APP/Contents/MacOS/amyfree-helper"
 
 echo "=== 生成应用图标 ==="
 # 图标与菜单栏共用 app/CatGlyph.swift；多文件编译时入口须命名为 main.swift
@@ -59,6 +67,8 @@ iconutil -c icns "$OUT/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns
 
 # ad-hoc 签名：本机运行足够，且避免 Gatekeeper 直接拦掉
 xattr -cr "$APP"
+# 先签内嵌的可执行组件，再签整个应用
+codesign --force --sign - "$APP/Contents/MacOS/amyfree-helper"
 codesign --force --deep --sign - "$APP"
 codesign --verify --strict "$APP"
 echo "✓ 签名有效 (ad-hoc)"
