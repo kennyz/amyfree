@@ -10,7 +10,18 @@
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[ ! -x "$DIR/python3" ] || export PATH="$DIR:$PATH"
+# 按字节百分号编码（中文节点名等），与 Python urllib.parse.quote 一致
+urlencode() {
+  local LC_ALL=C text="$1" out="" char code hex i
+  for ((i = 0; i < ${#text}; i++)); do
+    char="${text:i:1}"
+    case "$char" in
+      [A-Za-z0-9._~/-]) out+="$char" ;;
+      *) printf -v code '%d' "'$char"; printf -v hex '%%%02X' $((code & 255)); out+="$hex" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
 PORT="${1:-7890}"; API="${2:-127.0.0.1:9090}"; SECRET="${3:-}"; NODE="${4:-}"; WANT="${5:-}"
 
 # 提示语言：AMYFREE_LANG=en 输出英文，默认中文（菜单栏 App 按界面语言传入）
@@ -67,7 +78,7 @@ done
 if [ -n "$NODE" ]; then
   echo "--- [5] $(t 'API 节点测速' 'API latency test') (${NODE}) ---"
   # delay 接口的 url 参数必须 URL 编码，否则 mihomo 返回 400
-  enc="$(printf '%s' "$NODE" | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read()))' 2>/dev/null)"
+  enc="$(urlencode "$NODE")"
   resp="$(curl -s "${AUTH[@]}" --max-time 30 \
     "http://$API/proxies/$enc/delay?timeout=15000&url=http%3A%2F%2Fapi.ip.sb%2Fip" 2>/dev/null)"
   echo "    $resp"

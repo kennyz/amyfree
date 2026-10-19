@@ -1,9 +1,9 @@
-# MihomoMini 名称与关于菜单
+# MihomoMini Name and About Menu
 
-按用户要求，将应用名称、应用包和可执行文件统一为 MihomoMini；保留原 Bundle Identifier 和运行时目录，以兼容现有配置。
+As requested, the app name, app bundle and executable are unified as MihomoMini; the original Bundle Identifier and runtime directory are kept so existing configurations keep working.
 
-菜单底部添加「关于 MihomoMini…」，使用 AppKit 弹窗展示应用版本、构建号和已安装的 mihomo 内核版本。应用版本从 Bundle 读取，内核版本在后台运行 `mihomo -v` 读取，不依赖代理服务启动。未安装、无法读取或超时均显示对应状态。
+An "About MihomoMini…" item is added at the bottom of the menu. It uses an AppKit dialog to show the app version, build number and the installed mihomo core version. The app version is read from the bundle; the core version is read by running `mihomo -v` in the background, so it doesn't require the proxy service to be running. Not installed, unreadable and timed-out states are each shown.
 
-应用版本更新为 1.1.0，构建号为 2。安装脚本迁移旧名称的菜单栏程序，更新启动路径，保留订阅和代理配置。
+The app version is updated to 1.1.0, build 2. The install script migrates the menu bar app from its old name, updates the launch path, and keeps the subscription and proxy configuration.
 
-验证：编译、静态检查、plist 与严格代码签名校验，核对已安装包版本和新进程。菜单栏应用的自动界面读取超时，弹窗视觉检查未完成。
+Verification: build, static checks, plist and strict code-signature checks, and confirming the installed bundle version and the new process. Automated UI reading of the menu bar app timed out, so the dialog was not visually checked.

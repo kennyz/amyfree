@@ -1,0 +1,21 @@
+[package]
+name = "amyfree-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Amyfree menu bar app (AppKit via objc2)"
+build = "build.rs"
+
+[[bin]]
+name = "Amyfree"
+path = "src/main.rs"
+
+[dependencies]
+block2 = "0.6"
+libc = "0.2"
+dispatch2 = "0.3"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSAttributedString", "NSData", "NSDate", "NSDictionary", "NSNotification", "NSString", "NSThread", "NSTimer", "NSUserDefaults", "NSRunLoop", "NSGeometry", "NSObject", "NSValue", "NSLocale", "NSBundle"] }
+objc2-app-kit = { version = "0.3", features = ["NSAlert", "NSApplication", "NSButton", "NSButtonCell", "NSCell", "NSColor", "NSControl", "NSFont", "NSImage", "NSImageView", "NSLayoutAnchor", "NSLayoutConstraint", "NSMenu", "NSMenuItem", "NSResponder", "NSRunningApplication", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSText", "NSTextField", "NSView", "NSWorkspace", "NSAttributedString", "NSFontDescriptor", "NSGraphics", "NSBezierPath", "NSGraphicsContext", "NSParagraphStyle", "NSWindow", "block2"] }
+serde_json = "1.0.154"
+ureq = { version = "3.4.2", default-features = false }

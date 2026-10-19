@@ -2,34 +2,34 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 将应用改名为 Mimio，提供无需编辑 YAML 的原生分流设置。
+**Goal:** Rename the app to Mimio and provide native routing settings that don't require editing YAML.
 
-**Architecture:** Foundation 模型读取现有 rules，保留高级规则和其余配置；AppKit 窗口提供基础开关、规则列表、添加编辑与排序。保存使用内核校验，事务写入并在运行时通过 API 重载，失败回退。
+**Architecture:** A Foundation model reads the existing rules, keeping advanced rules and the rest of the config intact. An AppKit window provides the basic toggles, the rule list, adding/editing and reordering. Saving is validated by the core, written transactionally, reloaded through the API while running, and rolled back on failure.
 
-**Tech Stack:** Swift / Foundation / AppKit / mihomo REST API，无第三方依赖。
+**Tech Stack:** Swift / Foundation / AppKit / mihomo REST API, no third-party dependencies.
 
 ---
 
-## 1. 规则模型与保存事务
+## 1. Rule model and save transaction
 
-- 新建 `app/RoutingModel.swift`：只解析项目采用的 YAML rules 列表，识别基础规则、域名和 IP 网段；高级规则原样保留。
-- 输入支持网址提取域名、包含子域名/精确匹配、IPv4/IPv6 CIDR；禁止控制字符和分隔符注入。
-- 保存只修改 rules 与 mode，校验后更新 config.yaml、.run-config.yaml 和存在时的无 TUN 备份；配置变动冲突、校验失败或应用失败均不留下部分修改。
-- `tests/main.swift` 使用原生 Swift 断言运行器验证优先级、保留配置、校验失败、冲突和回退（本机 CLT 不含 XCTest）；使用真实内核验证生成配置与热重载。
+- New `app/RoutingModel.swift`: parses only the YAML rules list format used by the project, recognizing basic rules, domains and IP ranges; advanced rules are kept verbatim.
+- Input supports extracting the domain from a URL, subdomain/exact matching, and IPv4/IPv6 CIDR; control characters and separator injection are rejected.
+- Saving changes only rules and mode. After validation it updates config.yaml, .run-config.yaml and the non-TUN backup when present; config conflicts, validation failures or apply failures leave no partial changes.
+- `tests/main.swift` uses a native Swift assertion runner to check priority, config preservation, validation failures, conflicts and rollback (the local CLT has no XCTest); the real core is used to check the generated config and hot reload.
 
-## 2. 原生可视化窗口
+## 2. Native visual window
 
-- 新建 `app/RoutingRules.swift`，添加 `main.swift` 菜单入口及再次打开应用时的窗口入口。
-- 单窗口：基础设置、按优先级排列的规则列表、添加/编辑/删除/上下移动、推荐设置、还原上次、保存并应用。
-- 新建规则用原生表单，常用三种连接方式：代理、直连、拦截；高级规则显示为只读条目。
-- 显示未保存、保存中、失败及成功状态，关闭未保存窗口时提示，所有按钮支持键盘访问。
+- New `app/RoutingRules.swift`, with a menu entry in `main.swift` and a window entry when the app is opened again.
+- One window: basic settings, a priority-ordered rule list, add/edit/delete/move up/move down, recommended settings, revert to last, and save & apply.
+- New rules use a native form with the three common actions: Proxy, Direct, Block; advanced rules are shown as read-only entries.
+- Shows unsaved, saving, failed and succeeded states, prompts when closing with unsaved changes, and every button is keyboard accessible.
 
-## 3. 名称与交付
+## 3. Name and delivery
 
-- 修改 Info.plist、构建/安装脚本、README，迁移 MihomoMini 和早期名称，保留配置目录与 Bundle Identifier。
-- 版本 1.2.0，构建 4；沿用 M 盾牌图标。
-- 编译、静态检查、签名验证；安装并启动 Mimio，在原生界面检查表单、保存和重开读取。
+- Update Info.plist, the build/install scripts and the README; migrate MihomoMini and earlier names while keeping the config directory and Bundle Identifier.
+- Version 1.2.0, build 4; keep the M shield icon.
+- Build, static checks and signature verification; install and launch Mimio, and check the form, saving and reloading in the native UI.
 
-工作区无 Git 元数据，因此在当前目录实施，不创建提交或工作树。
+The workspace has no Git metadata, so the work is done in the current directory without commits or worktrees.
 
-参考：[规则格式与优先级](https://wiki.metacubex.one/config/rules/)、[配置重载 API](https://wiki.metacubex.one/api/)。
+References: [rule format and priority](https://wiki.metacubex.one/config/rules/), [config reload API](https://wiki.metacubex.one/api/).

@@ -1,23 +1,23 @@
-# 订阅节点检测与下载测速
+# Subscription Node Checks and Download Speed Tests
 
-## 用户体验
+## User experience
 
-菜单节点显示状态图标和延迟；「节点测速…」打开原生列表，包含状态、延迟、实际下载速度、最后检测时间。提供「立即检测」和选中/全部下载测速。每 30 秒自动检测延迟与可用性，实际下载速度仅手动检测。灰色未检测或服务暂停、蓝色检测中、绿色可用、黄色较慢、红色检测失败，图标同时附文字。
+Menu nodes show a status icon and latency. "Node Speed Test…" opens a native list with status, latency, real download speed and last check time. It offers "Test Now" plus download tests for the selected node or all nodes. Latency and availability are checked automatically every 30 seconds; real download speed is only tested by hand. Grey means not tested or service paused, blue testing, green available, yellow slow and red failed, and each icon comes with a text label.
 
-## 实现
+## Implementation
 
-- `NodeProbeModel.swift`：调度、测量状态、批次重入保护、订阅变化后丢弃旧结果。
-- `NodeProbeClient.swift`：通过 provider 节点 healthcheck API 测延迟，后台加载本地节点目录；所有网络操作位于后台。
-- `NodeProbeWindow.swift`：原生表格和手工入口；与菜单共享同一份状态。
-- `mihomo/node_speed.py`：下载测速启动隔离的 mihomo 会话并强制使用指定节点，下载 Cloudflare 1 MB 测试数据，返回实际 MB/s；不改变当前节点、分流或系统代理，退出时清理临时进程与文件。
-- 内核停止时使用隔离会话自动检测，不启用主代理或系统代理。睡眠唤醒后不补发堆积任务；检测未完成时跳过重叠轮次。
+- `NodeProbeModel.swift`: scheduling, measurement state, batch re-entry protection, and discarding stale results after the subscription changes.
+- `NodeProbeClient.swift`: measures latency through the provider node healthcheck API and loads the local node catalogue in the background; all network work runs in the background.
+- `NodeProbeWindow.swift`: native table and manual actions, sharing one state with the menu.
+- `mihomo/node_speed.py`: download tests start an isolated mihomo session pinned to the chosen node, download Cloudflare's 1 MB test data and return the real MB/s. They don't change the current node, routing or system proxy, and clean up temporary processes and files on exit.
+- While the core is stopped, automatic checks use the isolated session without turning on the main proxy or system proxy. Missed runs aren't replayed after waking from sleep, and overlapping rounds are skipped while a check is still running.
 
-## 验证
+## Verification
 
-状态阈值、30 秒调度、重入与订阅变化测试；真实节点延迟与下载请求；隔离界面验证图标和手工操作；观察至少两轮 30 秒自动检测。检查主配置、选中节点和系统代理在测速前后保持不变。
+Tests for status thresholds, the 30-second schedule, re-entry and subscription changes; real node latency and download requests; isolated UI checks of the icons and manual actions; observe at least two automatic 30-second rounds. Confirm the main config, selected node and system proxy are unchanged before and after testing.
 
-参考：[mihomo provider 节点检查接口](https://wiki.metacubex.one/api/)、[Cloudflare 下载测速端点](https://github.com/cloudflare/speedtest)。
+References: [mihomo provider node check API](https://wiki.metacubex.one/api/), [Cloudflare download speed endpoint](https://github.com/cloudflare/speedtest).
 
-## 追加：链式代理
+## Addendum: chain proxy
 
-按用户追加要求提供入口、出口两跳设置，使用 mihomo dialer-proxy；代理策略组使用链式出口，直连和拦截规则保留。启用前校验，运行时重载并检查结果；失败回退。单节点测速不切换主链路，链式出口提供单独测速条目。
+As a follow-up request, a two-hop entry/exit setting is provided using mihomo dialer-proxy. The proxy policy groups use the chain exit, while direct and block rules are kept. It is validated before enabling, reloaded and checked while running, and rolled back on failure. Single-node speed tests don't switch the main chain; the chain exit has its own speed test entry.

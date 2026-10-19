@@ -1,7 +1,7 @@
-# MihomoMini 应用图标
+# MihomoMini App Icon
 
-沿用现有菜单栏盾牌元素，用深蓝圆角底板、蓝绿色盾牌和白色 M 形节点连线绘制应用图标。
+Reusing the existing menu bar shield, the app icon is drawn as a dark blue rounded tile, a teal shield and a white M-shaped line connecting nodes.
 
-图标用原生 AppKit 代码绘制，源码为 `scripts/generate-icon.swift`；构建脚本生成 16–1024 像素的十个 PNG 表示，再使用 `iconutil` 打包为 `Contents/Resources/AppIcon.icns`。Info.plist 通过 CFBundleIconFile 指向该资源。菜单栏保持适合系统明暗模式的单色图标。
+The icon is drawn in native AppKit code in `scripts/generate-icon.swift`. The build script generates ten PNG representations from 16 to 1024 pixels, then packs them with `iconutil` into `Contents/Resources/AppIcon.icns`. Info.plist points to the resource through CFBundleIconFile. The menu bar keeps a monochrome icon that suits the system's light and dark modes.
 
-版本为 1.1.1，构建号为 3。验证涵盖大小尺寸预览、透明通道、ICNS 格式、构建、静态检查和严格代码签名。
+Version 1.1.1, build 3. Verification covers previews at large and small sizes, the alpha channel, the ICNS format, the build, static checks and strict code signing.

@@ -1,15 +1,15 @@
 #!/bin/bash
 # ============================================================
-# 编译并打包菜单栏 App（无需 Xcode 工程，直接 swiftc）
+# 编译并打包菜单栏 App（Rust + objc2，无需 Xcode 工程）
 #
 # 用法: bash scripts/build-app.sh
 # 产物: build/Amyfree.app
 #
-# 为什么不用 Xcode：这是纯 AppKit 单文件程序，swiftc 足够，
-# 且避免维护 .xcodeproj。若你更喜欢 Xcode，可自行新建工程
-# 并加入 app/main.swift。
+# 菜单栏在 app-rs/（Rust）；尚未迁移的窗口仍在 app/*.swift，
+# 由 app-rs/build.rs 调用 swiftc 编译成静态库链接进同一个可执行文件。
 # ============================================================
 set -euo pipefail
+export MACOSX_DEPLOYMENT_TARGET=13.0
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_SRC="$REPO/app"
@@ -33,27 +33,40 @@ mkdir -p "$CACHE" "$OUT"
 
 echo
 echo "=== 编译 ==="
-swiftc -O "$APP_SRC"/*.swift -o "$OUT/Amyfree" \
-  -module-cache-path "$CACHE" \
-  -target arm64-apple-macosx13.0 \
-  -framework AppKit -framework ServiceManagement
+command -v cargo >/dev/null 2>&1 || { echo "✗ 未找到 cargo。请安装 Rust：https://rustup.rs"; exit 1; }
+cargo build --release --locked --quiet --manifest-path "$REPO/Cargo.toml" -p amyfree-app
+cp "$REPO/target/release/Amyfree" "$OUT/Amyfree"
 echo "✓ 编译完成: $(du -h "$OUT/Amyfree" | cut -f1)"
+
+echo
+echo "=== 编译运行组件 amyfree-helper（Rust） ==="
+cargo build --release --locked --quiet --manifest-path "$REPO/Cargo.toml" -p amyfree-core --bin amyfree-helper
+cp "$REPO/target/release/amyfree-helper" "$OUT/amyfree-helper"
+echo "✓ amyfree-helper: $(du -h "$OUT/amyfree-helper" | cut -f1)"
 
 echo
 echo "=== 打包 .app ==="
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$OUT/Amyfree" "$APP/Contents/MacOS/"
+cp "$OUT/amyfree-helper" "$APP/Contents/MacOS/"
 cp "$APP_SRC/Info.plist" "$APP/Contents/"
 cp "$REPO/scripts/install.sh" "$APP/Contents/Resources/install.sh"
-chmod +x "$APP/Contents/MacOS/Amyfree"
+chmod +x "$APP/Contents/MacOS/Amyfree" "$APP/Contents/MacOS/amyfree-helper"
 
 echo "=== 生成应用图标 ==="
-swift -module-cache-path "$CACHE" "$REPO/scripts/generate-icon.swift" "$OUT/AppIcon.iconset"
+# 图标与菜单栏共用 app/CatGlyph.swift；多文件编译时入口须命名为 main.swift
+mkdir -p "$STAGING/icon"
+cp "$REPO/scripts/generate-icon.swift" "$STAGING/icon/main.swift"
+swiftc "$STAGING/icon/main.swift" "$APP_SRC/CatGlyph.swift" -o "$STAGING/icon/generate-icon" \
+  -module-cache-path "$CACHE" -target arm64-apple-macosx13.0 -framework AppKit
+"$STAGING/icon/generate-icon" "$OUT/AppIcon.iconset"
 iconutil -c icns "$OUT/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
 
 # ad-hoc 签名：本机运行足够，且避免 Gatekeeper 直接拦掉
 xattr -cr "$APP"
+# 先签内嵌的可执行组件，再签整个应用
+codesign --force --sign - "$APP/Contents/MacOS/amyfree-helper"
 codesign --force --deep --sign - "$APP"
 codesign --verify --strict "$APP"
 echo "✓ 签名有效 (ad-hoc)"

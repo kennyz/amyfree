@@ -3,14 +3,14 @@
 # mihomo 服务管理脚本 —— 订阅 / 命令行模式
 #   用法: ./mihomoctl.sh {start|stop|restart|status|log|test|sub URL|nodes|use 组 节点|env}
 #
-# 流程：拉取订阅 → parse_sub.py 转成 Clash 格式 → 写入 providers/nodes.yaml
+# 流程：拉取订阅 → amyfree-helper 转成 Clash 格式 → 写入 providers/nodes.yaml
 #       → 启动 mihomo（以 type: file provider 加载）
 # ============================================================
 set -uo pipefail
 umask 077
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[ ! -x "$DIR/python3" ] || export PATH="$DIR:$PATH"
+HELPER="$DIR/amyfree-helper"
 BIN="$DIR/mihomo"
 CFG="$DIR/config.yaml"
 SUB_FILE="$DIR/.sub-url"
@@ -46,14 +46,14 @@ is_running() {
 
 # 拉取订阅并转换成 mihomo 可读的 Clash 格式
 refresh_nodes() {
-  python3 "$DIR/subscription.py" fetch
+  "$HELPER" subscription fetch
 }
 
 start() {
   if is_running; then ylw "• $(t '已在运行' 'Already running') (pid $(cat "$PIDFILE"))"; return 0; fi
-  need_sub || return 1
-  # 没有节点文件就先拉一次
+  # 没有节点文件就先拉一次；只有手工节点时无需订阅
   if [ ! -s "$NODES_FILE" ]; then
+    need_sub || return 1
     refresh_nodes || return 1
   fi
   # 同步 API secret 到 config（脚本用占位符 __API_SECRET__）
@@ -86,24 +86,7 @@ start() {
   : > "$LOGFILE"
   chmod 600 "$LOGFILE"
   # 独立会话避免命令/父进程退出时，后台内核被一起回收。
-  if ! python3 - "$BIN" "$DIR" "$LOGFILE" "$PIDFILE" <<'PY_START'
-import os, subprocess, sys
-binary, directory, logfile, pidfile = sys.argv[1:]
-process = None
-try:
-    with open(logfile, 'ab') as log:
-        process = subprocess.Popen([binary, '-d', directory, '-f', directory + '/.run-config.yaml'],
-                                   cwd=directory, stdin=subprocess.DEVNULL, stdout=log,
-                                   stderr=subprocess.STDOUT, start_new_session=True)
-    with open(pidfile, 'w') as file:
-        file.write(str(process.pid))
-    os.chmod(pidfile, 0o644)
-except Exception:
-    if process is not None:
-        process.terminate()
-    sys.exit(1)
-PY_START
-  then
+  if ! "$HELPER" spawn-core "$BIN" "$DIR" "$LOGFILE" "$PIDFILE"; then
     red "$(t '✗ 无法创建后台内核进程' '✗ Could not start the core process')"
     return 1
   fi
@@ -151,15 +134,15 @@ reload_sub() {
 
 test_sub() {
   if [ -n "${1:-}" ]; then
-    python3 "$DIR/subscription.py" test "$1"
+    "$HELPER" subscription test "$1"
   else
-    python3 "$DIR/subscription.py" test
+    "$HELPER" subscription test
   fi
 }
 
 nodes() {
   is_running || { red "$(t '✗ 服务未运行' '✗ Service not running')"; return 1; }
-  python3 "$DIR/nodes.py" "nodes" "$APICTL" "$(cat "$SECRET_FILE" 2>/dev/null)"
+  "$HELPER" nodes "nodes" "$APICTL" "$(cat "$SECRET_FILE" 2>/dev/null)"
 }
 
 use_group() {
@@ -193,7 +176,7 @@ case "${1:-}" in
   status)  status ;;
   log)     tail -n "${2:-40}" "$LOGFILE" ;;
   test)    test_sub "${2:-}" ;;
-  refresh) python3 "$DIR/subscription.py" update ;;
+  refresh) "$HELPER" subscription update ;;
   verify)  verify ;;
   sub)
     if [ -z "${2:-}" ]; then
@@ -203,7 +186,7 @@ case "${1:-}" in
         http://*|https://*) ;;
         *) red "$(t '✗ 订阅地址必须以 http:// 或 https:// 开头' '✗ The subscription URL must start with http:// or https://')"; exit 1 ;;
       esac
-      python3 "$DIR/subscription.py" save "$2"
+      "$HELPER" subscription save "$2"
     fi ;;
   nodes)   nodes ;;
   use)     use_group "${2:-}" "${3:-}" ;;

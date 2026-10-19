@@ -13,7 +13,6 @@
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[ ! -x "$DIR/python3" ] || export PATH="$DIR:$PATH"
 # 状态文件优先放脚本目录；该目录不可写时（受限沙箱等）退回临时目录
 STATE="$DIR/.proxy-state"
 if [ ! -w "$DIR" ]; then
@@ -31,29 +30,23 @@ t() { if [ "${AMYFREE_LANG:-zh}" = "en" ]; then printf '%s' "$2"; else printf '%
 
 # 找到「有 IPv4 地址且处于活跃状态」的网络服务（即真正的出口网卡）
 active_services() {
-  # 设备名 -> 服务名 映射
-  local order
-  order="$(networksetup -listnetworkserviceorder 2>/dev/null)"
-  python3 - "$order" <<'PY'
-import re, subprocess, sys
-order = sys.argv[1]
-# 解析形如: (1) Wi-Fi\n(Hardware Port: Wi-Fi, Device: en1)
-pairs = re.findall(r'\(\d+\)\s+(.+?)\n\(Hardware Port: .*?, Device: (\w+)\)', order)
-active = []
-for svc, dev in pairs:
-    svc = svc.strip()
-    try:
-        out = subprocess.run(['/sbin/ifconfig', dev], capture_output=True, text=True, timeout=5).stdout
-    except Exception:
-        continue
+  # 设备名 -> 服务名 映射；形如: (1) Wi-Fi\n(Hardware Port: Wi-Fi, Device: en1)
+  # 已停用的服务显示为 (*)，不会匹配数字序号。
+  local svc dev info ip
+  networksetup -listnetworkserviceorder 2>/dev/null | awk '
+    /^\([0-9]+\) / { sub(/^\([0-9]+\) /, ""); svc = $0; next }
+    /^\(Hardware Port: .*Device: [A-Za-z0-9]+\)/ {
+      if (svc != "" && match($0, /Device: [A-Za-z0-9]+/)) print svc "\t" substr($0, RSTART + 8, RLENGTH - 8)
+      svc = ""
+    }' | while IFS=$'\t' read -r svc dev; do
+    info="$(/sbin/ifconfig "$dev" 2>/dev/null)" || continue
     # 有 inet（IPv4）且 UP 且 不是 169.254 自分配
-    if re.search(r'\binet (\d+\.\d+\.\d+\.\d+)', out) and 'UP' in out.split('\n')[0]:
-        ip = re.search(r'\binet (\d+\.\d+\.\d+\.\d+)', out).group(1)
-        if not ip.startswith('169.254.'):
-            active.append(svc)
-for s in active:
-    print(s)
-PY
+    printf '%s\n' "$info" | head -1 | grep -q 'UP' || continue
+    ip="$(printf '%s\n' "$info" | awk '$1 == "inet" { print $2; exit }')"
+    [ -n "$ip" ] || continue
+    case "$ip" in 169.254.*) continue ;; esac
+    printf '%s\n' "$svc"
+  done
 }
 
 set_one() {

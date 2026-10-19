@@ -29,8 +29,6 @@ verify() {
 echo '=== Download and verify public dependencies ==='
 download 'https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-darwin-arm64-go124-v1.19.32.gz' "$DEPS/mihomo.gz"
 verify "$DEPS/mihomo.gz" 3105fa21ce5195b456a13d57cde2f61dbdac7d04e9cf74b922d63064546c4d01
-download 'https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.13.16%2B20261003-aarch64-apple-darwin-install_only.tar.gz' "$DEPS/python.tar.gz"
-verify "$DEPS/python.tar.gz" d8975d7df4f08f7b1c7aafcdfacbddcec3d366415f2c1a72b2466b6850815933
 RULES='https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/426f62e175218c1f1d0c909188fbff1746f88042'
 for file in geoip.dat geosite.dat country.mmdb; do
   download "$RULES/$file" "$DEPS/$file"
@@ -45,24 +43,18 @@ bash "$REPO/scripts/build-app.sh"
 APP="$STAGING/Amyfree.app"
 ditto --noextattr --norsrc "$REPO/build/Amyfree.app" "$APP"
 RUNTIME="$APP/Contents/Resources/runtime"
-PYTHON="$APP/Contents/Resources/Python"
 mkdir -p "$RUNTIME" "$APP/Contents/Resources/licenses"
 # Use an allowlist so user configuration and credentials can never enter the bundle.
-for file in mihomoctl.sh proxyctl.sh tun.sh verify_node.sh parse_sub.py subscription.py node_speed.py chain_proxy.py cert_probe.py nodes.py geodata_update.py config.template.yaml; do
+for file in mihomoctl.sh proxyctl.sh tun.sh verify_node.sh config.template.yaml; do
   cp "$REPO/mihomo/$file" "$RUNTIME/$file"
 done
 cp "$REPO/scripts/refresh-geodata.sh" "$RUNTIME/refresh-geodata.sh"
 for file in geoip.dat geosite.dat country.mmdb; do cp "$DEPS/$file" "$RUNTIME/$file"; done
 gunzip -c "$DEPS/mihomo.gz" > "$APP/Contents/MacOS/mihomo"
 chmod 755 "$APP/Contents/MacOS/mihomo" "$RUNTIME"/*.sh
-tar -xzf "$DEPS/python.tar.gz" -C "$STAGING"
-mv "$STAGING/python" "$PYTHON"
-PYTHONDONTWRITEBYTECODE=1 "$PYTHON/bin/python3" -m pip install --disable-pip-version-check --no-compile --only-binary=:all: 'PyYAML==6.0.3' 'certifi==2026.7.22'
 cp "$REPO/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/"
 cp "$DEPS/mihomo-LICENSE.txt" "$DEPS/rule-data-README.md" "$APP/Contents/Resources/licenses/"
-# Remove rebuild-only static libraries and generated caches before sealing.
-find "$PYTHON" -name '*.a' -delete
-find "$PYTHON" -type d -name __pycache__ -prune -exec rm -rf {} +
+python3 "$REPO/scripts/collect-rust-licenses.py" "$APP/Contents/Resources/licenses/rust"
 xattr -cr "$APP"
 
 echo '=== Sign nested Mach-O components, then the application ==='

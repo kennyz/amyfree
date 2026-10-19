@@ -18,10 +18,14 @@ with tempfile.TemporaryDirectory(prefix='amyfree-source-install-') as tmp:
     with archive.open('wb') as output:
         subprocess.run(['git', 'archive', 'HEAD'], cwd=repo, stdout=output, check=True)
     with tarfile.open(archive) as source:
-        source.extractall(checkout, filter='data')
+        try:
+            source.extractall(checkout, filter='data')
+        except TypeError:  # Python < 3.12 has no extraction filters; the archive is our own HEAD.
+            source.extractall(checkout)
     for name in ['install-source-runtime.sh', 'install-menubar.sh', 'fetch-deps.sh', 'refresh-geodata.sh']:
         shutil.copyfile(repo / 'scripts' / name, checkout / 'scripts' / name)
-    shutil.copyfile(repo / 'mihomo/geodata_update.py', checkout / 'mihomo/geodata_update.py')
+    (checkout / 'build').mkdir()
+    shutil.copy2(repo / 'target/release/amyfree-helper', checkout / 'build/amyfree-helper')
     assert not (checkout / 'mihomo/mihomo').exists()
     binary_dir = root / 'bin'; binary_dir.mkdir()
     fake_curl = binary_dir / 'curl'
@@ -45,7 +49,7 @@ esac
     environment = dict(os.environ, PATH=str(binary_dir) + ':' + os.environ['PATH'])
     command = ['bash', str(checkout / 'scripts/install-source-runtime.sh'), str(destination)]
     subprocess.run(command, env=environment, check=True, stdout=subprocess.PIPE)
-    for name in ['mihomo', 'geoip.dat', 'geosite.dat', 'country.mmdb', 'mihomoctl.sh', 'proxyctl.sh', 'tun.sh', 'config.yaml', '.api-secret']:
+    for name in ['mihomo', 'geoip.dat', 'geosite.dat', 'country.mmdb', 'mihomoctl.sh', 'proxyctl.sh', 'tun.sh', 'amyfree-helper', 'config.yaml', '.api-secret']:
         assert (destination / name).is_file(), name
     subprocess.run([str(destination / 'mihomo'), '-v'], check=True, stdout=subprocess.PIPE)
     assert not (destination / '.sub-url').exists(), 'placeholder blocks first-launch subscription prompt'
